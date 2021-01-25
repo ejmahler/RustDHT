@@ -56,7 +56,12 @@ impl<T: FftNum> MixedRadix<T> {
         let mut twiddles = Vec::with_capacity(width_limit * height_limit);
         for x in 0..width_limit {
             for y in 0..height_limit {
-                twiddles.push(twiddles::compute_dft_twiddle_inverse(x * y, len));
+                let twiddle = twiddles::compute_dft_twiddle_inverse::<T>(x * y, len);
+                let diffsum = Complex {
+                    re: twiddle.re + twiddle.im,
+                    im: twiddle.re - twiddle.im,
+                };
+                twiddles.push(diffsum * T::from_f32(0.5).unwrap());
             }
         }
 
@@ -115,8 +120,8 @@ impl<T: FftNum> MixedRadix<T> {
 
     #[inline(never)]
     fn apply_twiddles(&self, buffer: &mut [T]) {
-        let width_limit = (self.width + 1) / 2;
-        let height_limit = (self.height + 1) / 2;
+        let width_limit = self.width / 2 + 1;
+        let height_limit = self.height / 2 + 1;
         let twiddle_stride = self.twiddles_height.len();
 
         for i in 1..width_limit {
@@ -130,153 +135,33 @@ impl<T: FftNum> MixedRadix<T> {
                 let twiddle_ik = self.twiddles[i * twiddle_stride + k];
                 let twiddle_k = self.twiddles_height[k];
 
-                let twiddle_top_fwd = twiddle_ik;
-                let twiddle_top_rev = twiddle_i * twiddle_ik.conj();
-                let twiddle_bot_fwd = twiddle_k * twiddle_ik.conj();
-                let twiddle_bot_rev = twiddle_ik * twiddle_i.conj() * twiddle_k.conj();
-
                 // Instead of just multiplying a single input vlaue with a single complex number like we do in the DFT,
                 // we need to combine 4 numbers, determined by mirroring the input number across the horizontal and vertical axes of the array
                 let input_top_fwd = buffer[i*self.height + k];
                 let input_bot_fwd = buffer[i_bot*self.height + k];
                 let input_top_rev = buffer[i*self.height + k_rev];
                 let input_bot_rev = buffer[i_bot*self.height + k_rev];
+
+                // Apply our "main" twiddle factors.
+                // From here, we're going to have a few layers of intermediate values with more or less meaningless names.
+                let bottom_diff = input_bot_fwd * twiddle_ik.im - input_bot_rev * twiddle_ik.re;
+                let bottom_sum = input_bot_fwd * twiddle_ik.re + input_bot_rev * twiddle_ik.im;
+                let top_sum = input_top_fwd * twiddle_ik.im + input_top_rev * twiddle_ik.re;
+                let top_diff = input_top_fwd * twiddle_ik.re - input_top_rev * twiddle_ik.im;
+
+                // Apply the "height twiddles" to the bottom data for another layer of intermediates
+                let bottom_k_sum = twiddle_k.re * bottom_diff + twiddle_k.im * bottom_sum;
+                let bottom_k_diff = twiddle_k.re * bottom_sum - twiddle_k.im * bottom_diff;
+
+                // one final intermediate layer
+                let out_top_rev = top_sum - bottom_k_sum;
+                let out_bot_rev = top_diff - bottom_k_diff;
     
-                // Since we're overwriting data that our mirrored input values will need whenthey compute their own twiddles,
-                // we currently can't apply twiddles inplace. An obvious optimization here is to compute all 4 values at once and write them all out at once.
-                // That would cut down on the number of flops by 75%, and would let us do this inplace
-                buffer[i*self.height + k] = T::from_f32(0.5).unwrap() * (
-                    input_top_fwd      * twiddle_top_fwd.re
-                    - input_top_fwd    * twiddle_top_fwd.im
-                    + input_top_rev    * twiddle_top_fwd.re
-                    + input_top_rev    * twiddle_top_fwd.im
-                    + input_bot_fwd    * twiddle_bot_fwd.re
-                    + input_bot_fwd    * twiddle_bot_fwd.im
-                    - input_bot_rev    * twiddle_bot_fwd.re
-                    + input_bot_rev    * twiddle_bot_fwd.im
-                );
-                    
-                buffer[i*self.height + k_rev] = T::from_f32(0.5).unwrap() * (
-                    input_top_rev     * twiddle_top_rev.re
-                    - input_top_rev   * twiddle_top_rev.im
-                    + input_top_fwd   * twiddle_top_rev.re
-                    + input_top_fwd   * twiddle_top_rev.im
-                    + input_bot_rev   * twiddle_bot_rev.re
-                    + input_bot_rev   * twiddle_bot_rev.im
-                    - input_bot_fwd   * twiddle_bot_rev.re
-                    + input_bot_fwd   * twiddle_bot_rev.im
-                );
-
-                buffer[i_bot*self.height + k] = T::from_f32(0.5).unwrap() * (
-                    input_bot_fwd     * twiddle_bot_fwd.re
-                    - input_bot_fwd   * twiddle_bot_fwd.im
-                    + input_bot_rev   * twiddle_bot_fwd.re
-                    + input_bot_rev   * twiddle_bot_fwd.im
-                    + input_top_fwd   * twiddle_top_fwd.re
-                    + input_top_fwd   * twiddle_top_fwd.im
-                    - input_top_rev   * twiddle_top_fwd.re
-                    + input_top_rev   * twiddle_top_fwd.im
-                );
-                    
-                buffer[i_bot*self.height + k_rev] = T::from_f32(0.5).unwrap() * (
-                    input_bot_rev     * twiddle_bot_rev.re
-                    - input_bot_rev   * twiddle_bot_rev.im
-                    + input_bot_fwd   * twiddle_bot_rev.re
-                    + input_bot_fwd   * twiddle_bot_rev.im
-                    + input_top_rev   * twiddle_top_rev.re
-                    + input_top_rev   * twiddle_top_rev.im
-                    - input_top_fwd   * twiddle_top_rev.re
-                    + input_top_fwd   * twiddle_top_rev.im
-                );
-            }
-            
-            if self.height % 2 == 0 {
-                let k = self.height / 2;
-
-                let twiddle_ik = self.twiddles[i * twiddle_stride + k];
-                let twiddle_k = self.twiddles_height[k];
-
-                let twiddle_top_fwd = twiddle_ik;
-                let twiddle_bot_fwd = twiddle_k * twiddle_ik.conj();
-
-                // Instead of just multiplying a single input vlaue with a single complex number like we do in the DFT,
-                // we need to combine 4 numbers, determined by mirroring the input number across the horizontal and vertical axes of the array
-                let input_top_fwd = buffer[i*self.height + k];
-                let input_bot_fwd = buffer[i_bot*self.height + k];
-    
-                // Since we're overwriting data that our mirrored input values will need whenthey compute their own twiddles,
-                // we currently can't apply twiddles inplace. An obvious optimization here is to compute all 4 values at once and write them all out at once.
-                // That would cut down on the number of flops by 75%, and would let us do this inplace
-                buffer[i*self.height + k] = T::from_f32(0.5).unwrap() * (
-                    input_top_fwd      * twiddle_top_fwd.re
-                    + input_top_fwd    * twiddle_top_fwd.re
-                    + input_bot_fwd    * twiddle_bot_fwd.im
-                    + input_bot_fwd    * twiddle_bot_fwd.im
-                );
-
-                buffer[i_bot*self.height + k] = T::from_f32(0.5).unwrap() * (
-                    input_bot_fwd     * twiddle_bot_fwd.re
-                    + input_bot_fwd   * twiddle_bot_fwd.re
-                    + input_top_fwd   * twiddle_top_fwd.im
-                    + input_top_fwd   * twiddle_top_fwd.im
-                );
-            }
-        }
-
-        if self.width % 2 == 0 {
-            let i = self.width / 2;
-
-            let twiddle_i = self.twiddles_width[i];
-
-            for k in 1..height_limit {
-                let k_rev = self.height - k;
-
-                let twiddle_ik = self.twiddles[i * twiddle_stride + k];
-
-                let twiddle_top_fwd = twiddle_ik;
-                let twiddle_top_rev = twiddle_i * twiddle_ik.conj();
-
-                // Instead of just multiplying a single input vlaue with a single complex number like we do in the DFT,
-                // we need to combine 4 numbers, determined by mirroring the input number across the horizontal and vertical axes of the array
-                let input_top_fwd = buffer[i*self.height + k];
-                let input_top_rev = buffer[i*self.height + k_rev];
-    
-                // Since we're overwriting data that our mirrored input values will need whenthey compute their own twiddles,
-                // we currently can't apply twiddles inplace. An obvious optimization here is to compute all 4 values at once and write them all out at once.
-                // That would cut down on the number of flops by 75%, and would let us do this inplace
-                buffer[i*self.height + k] = T::from_f32(0.5).unwrap() * (
-                    input_top_fwd      * twiddle_top_fwd.re
-                    + input_top_rev    * twiddle_top_fwd.im
-                    + input_top_fwd    * twiddle_top_fwd.re
-                    + input_top_rev    * twiddle_top_fwd.im
-                );
-                    
-                buffer[i*self.height + k_rev] = T::from_f32(0.5).unwrap() * (
-                    input_top_rev     * twiddle_top_rev.re
-                    + input_top_fwd   * twiddle_top_rev.im
-                    + input_top_rev   * twiddle_top_rev.re
-                    + input_top_fwd   * twiddle_top_rev.im
-                );
-            }
-
-            if self.height % 2 == 0 {
-                let k = self.height / 2;
-
-                let twiddle_ik = self.twiddles[i * twiddle_stride + k];
-
-                // Instead of just multiplying a single input vlaue with a single complex number like we do in the DFT,
-                // we need to combine 4 numbers, determined by mirroring the input number across the horizontal and vertical axes of the array
-                let input_top_fwd = buffer[i*self.height + k];
-    
-                // Since we're overwriting data that our mirrored input values will need whenthey compute their own twiddles,
-                // we currently can't apply twiddles inplace. An obvious optimization here is to compute all 4 values at once and write them all out at once.
-                // That would cut down on the number of flops by 75%, and would let us do this inplace
-                buffer[i*self.height + k] = T::from_f32(0.5).unwrap() * (
-                    input_top_fwd      * twiddle_ik.re
-                    + input_top_fwd    * twiddle_ik.im
-                    + input_top_fwd    * twiddle_ik.re
-                    + input_top_fwd    * twiddle_ik.im
-                );
+                // All of our intermediate values are done, the only thing left is to combine them and write them out
+                buffer[i*self.height + k]           = top_sum + bottom_k_sum;
+                buffer[i_bot*self.height + k]       = top_diff + bottom_k_diff;
+                buffer[i*self.height + k_rev]       = twiddle_i.re * out_top_rev + twiddle_i.im * out_bot_rev;
+                buffer[i_bot*self.height + k_rev]   = twiddle_i.im * out_top_rev - twiddle_i.re * out_bot_rev;
             }
         }
     }
