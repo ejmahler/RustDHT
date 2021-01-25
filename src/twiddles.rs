@@ -26,3 +26,18 @@ pub fn compute_dft_twiddle_inverse<T: FftNum>(
 
     result
 }
+
+pub fn compute_dft_twiddle_forward<T: FftNum>(
+    index: usize,
+    fft_len: usize,
+) -> Complex<T> {
+    let constant = -2f64 * std::f64::consts::PI / fft_len as f64;
+    let angle = constant * index as f64;
+
+    let result = Complex {
+        re: T::from_f64(angle.cos()).unwrap(),
+        im: T::from_f64(angle.sin()).unwrap(),
+    };
+
+    result
+}

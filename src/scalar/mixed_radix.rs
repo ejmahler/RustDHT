@@ -54,9 +54,9 @@ impl<T: FftNum> MixedRadix<T> {
         let height_limit = height / 2 + 1;
 
         let mut twiddles = Vec::with_capacity(width_limit * height_limit);
-        for x in 0..width_limit {
-            for y in 0..height_limit {
-                let twiddle = twiddles::compute_dft_twiddle_inverse::<T>(x * y, len);
+        for x in 1..width_limit {
+            for y in 1..height_limit {
+                let twiddle = twiddles::compute_dft_twiddle_forward::<T>(x * y, len);
                 let diffsum = Complex {
                     re: twiddle.re + twiddle.im,
                     im: twiddle.re - twiddle.im,
@@ -65,8 +65,8 @@ impl<T: FftNum> MixedRadix<T> {
             }
         }
 
-        let twiddles_width = (0..width_limit).map(|i| twiddles::compute_dft_twiddle_inverse(i, width)).collect::<Box<[_]>>();
-        let twiddles_height = (0..height_limit).map(|k| twiddles::compute_dft_twiddle_inverse(k, height)).collect::<Box<[_]>>();
+        let twiddles_width = (1..width_limit).map(|i| twiddles::compute_dft_twiddle_inverse(i, width)).collect::<Box<[_]>>();
+        let twiddles_height = (1..height_limit).map(|k| twiddles::compute_dft_twiddle_forward(k, height)).collect::<Box<[_]>>();
 
         // Collect some data about what kind of scratch space our inner DHTs need
         let height_inplace_scratch = height_dht.get_inplace_scratch_len();
@@ -120,48 +120,51 @@ impl<T: FftNum> MixedRadix<T> {
 
     #[inline(never)]
     fn apply_twiddles(&self, buffer: &mut [T]) {
-        let width_limit = self.width / 2 + 1;
-        let height_limit = self.height / 2 + 1;
+        let _width_limit = self.width / 2 + 1;
+        let _height_limit = self.height / 2 + 1;
         let twiddle_stride = self.twiddles_height.len();
 
-        for i in 1..width_limit {
+        if self.width < 2 || self.height < 2 {
+            return;
+        }
+
+        for (width_index, (width_twiddle, main_twiddle_chunk)) in self.twiddles_width.iter().zip(self.twiddles.chunks_exact(twiddle_stride)).enumerate() {
+            let i = width_index + 1;
             let i_bot = self.width - i;
-
-            let twiddle_i = self.twiddles_width[i];
             
-            for k in 1..height_limit {
+            for (height_index, (height_twiddle, main_twiddle)) in self.twiddles_height.iter().zip(main_twiddle_chunk.iter()).enumerate() {
+                let k = height_index + 1;
                 let k_rev = self.height - k;
-
-                let twiddle_ik = self.twiddles[i * twiddle_stride + k];
-                let twiddle_k = self.twiddles_height[k];
 
                 // Instead of just multiplying a single input vlaue with a single complex number like we do in the DFT,
                 // we need to combine 4 numbers, determined by mirroring the input number across the horizontal and vertical axes of the array
-                let input_top_fwd = buffer[i*self.height + k];
-                let input_bot_fwd = buffer[i_bot*self.height + k];
-                let input_top_rev = buffer[i*self.height + k_rev];
-                let input_bot_rev = buffer[i_bot*self.height + k_rev];
+                // The way the math falls out, we can treat the forward value and reverse value of each row as a complex number,
+                // with the forward value as real, and the reverse value as complex
+                let input_top = Complex {
+                    re: buffer[i*self.height + k],
+                    im: buffer[i*self.height + k_rev],
+                };
+                let input_bottom = Complex {
+                    re: buffer[i_bot*self.height + k],
+                    im: buffer[i_bot*self.height + k_rev],
+                };
 
                 // Apply our "main" twiddle factors.
+                let main_top = input_top.conj() * main_twiddle;
+                let main_bottom = input_bottom * main_twiddle;
+ 
                 // From here, we're going to have a few layers of intermediate values with more or less meaningless names.
-                let bottom_diff = input_bot_fwd * twiddle_ik.im - input_bot_rev * twiddle_ik.re;
-                let bottom_sum = input_bot_fwd * twiddle_ik.re + input_bot_rev * twiddle_ik.im;
-                let top_sum = input_top_fwd * twiddle_ik.im + input_top_rev * twiddle_ik.re;
-                let top_diff = input_top_fwd * twiddle_ik.re - input_top_rev * twiddle_ik.im;
-
-                // Apply the "height twiddles" to the bottom data for another layer of intermediates
-                let bottom_k_sum = twiddle_k.re * bottom_diff + twiddle_k.im * bottom_sum;
-                let bottom_k_diff = twiddle_k.re * bottom_sum - twiddle_k.im * bottom_diff;
-
-                // one final intermediate layer
-                let out_top_rev = top_sum - bottom_k_sum;
-                let out_bot_rev = top_diff - bottom_k_diff;
+                // Mixed  n here, we're applying the "height twiddles" and "width twiddles" to simulate the twiddle factors that mirror `main_twiddle`
+                let out_bottom = main_bottom * height_twiddle;
+                let out_fwd = main_top + out_bottom;
+                let out_rev_pretwiddle = main_top - out_bottom;
+                let out_rev = out_rev_pretwiddle.conj() * width_twiddle;
     
                 // All of our intermediate values are done, the only thing left is to combine them and write them out
-                buffer[i*self.height + k]           = top_sum + bottom_k_sum;
-                buffer[i_bot*self.height + k]       = top_diff + bottom_k_diff;
-                buffer[i*self.height + k_rev]       = twiddle_i.re * out_top_rev + twiddle_i.im * out_bot_rev;
-                buffer[i_bot*self.height + k_rev]   = twiddle_i.im * out_top_rev - twiddle_i.re * out_bot_rev;
+                buffer[i*self.height + k]           = out_fwd.re;
+                buffer[i_bot*self.height + k]       = out_fwd.im;
+                buffer[i*self.height + k_rev]       = out_rev.re;
+                buffer[i_bot*self.height + k_rev]   = out_rev.im;
             }
         }
     }
@@ -247,7 +250,7 @@ mod unit_tests {
     use std::sync::Arc;
 
     #[test]
-    fn test_mixed_radix() {
+    fn test_mixed_radix_correct() {
         for width in 1..7 {
             for height in 1..7 {
                 test_mixed_radix_with_lengths(width, height);
