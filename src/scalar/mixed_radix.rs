@@ -120,33 +120,42 @@ impl<T: FftNum> MixedRadix<T> {
 
     #[inline(never)]
     fn apply_twiddles(&self, buffer: &mut [T]) {
-        let _width_limit = self.width / 2 + 1;
-        let _height_limit = self.height / 2 + 1;
+        // Instead of just multiplying a single input vlaue with a single complex number like we do in the DFT,
+        // we need to combine 4 numbers, determined by mirroring the input number across the horizontal and vertical axes of the array
+
+        // So we're going to iterate over the first half of the rows, and the reversed second half of the rows simultaneously
+        // then, for each pair of rows, we'll loop over the first half of the elements, and the reversed second half of the elements simultaneously
+        // that will give us 4 mirrored elements to process in-place for each iteration of the loop
+
+        // Note that there's a special case here: If width or height are even, we'll get into situations where some of the 4 elements are the same
+        // IE, if the height is even, we'll get into a situation in our inner loop where y == y_bottom
+        // And, if the width is even, we'll get into a situation in our outer loop where x == x_rev
+        // In these situations, we *could* split out the loop and handle these special cases to optimize out the redundant floating point ops
+        // but that adds significant complexity, and benchmarking shows that the added complexity actually hurts performance more than the reduced ops helps
+
+        let width_limit = self.width / 2 + 1;
+        let height_limit = self.height / 2 + 1;
         let twiddle_stride = self.twiddles_height.len();
 
         if self.width < 2 || self.height < 2 {
             return;
         }
 
-        for (width_index, (width_twiddle, main_twiddle_chunk)) in self.twiddles_width.iter().zip(self.twiddles.chunks_exact(twiddle_stride)).enumerate() {
-            let i = width_index + 1;
-            let i_bot = self.width - i;
+        for (x, (width_twiddle, main_twiddle_chunk)) in (1..width_limit).zip(self.twiddles_width.iter().zip(self.twiddles.chunks_exact(twiddle_stride))) {
+            let x_rev = self.width - x;
             
-            for (height_index, (height_twiddle, main_twiddle)) in self.twiddles_height.iter().zip(main_twiddle_chunk.iter()).enumerate() {
-                let k = height_index + 1;
-                let k_rev = self.height - k;
+            for (y, (height_twiddle, main_twiddle)) in (1..height_limit).zip(self.twiddles_height.iter().zip(main_twiddle_chunk.iter())) {
+                let y_bottom = self.height - y;
 
-                // Instead of just multiplying a single input vlaue with a single complex number like we do in the DFT,
-                // we need to combine 4 numbers, determined by mirroring the input number across the horizontal and vertical axes of the array
                 // The way the math falls out, we can treat the forward value and reverse value of each row as a complex number,
                 // with the forward value as real, and the reverse value as complex
                 let input_top = Complex {
-                    re: buffer[i*self.height + k],
-                    im: buffer[i*self.height + k_rev],
+                    re: buffer[x*self.height + y],
+                    im: buffer[x*self.height + y_bottom],
                 };
                 let input_bottom = Complex {
-                    re: buffer[i_bot*self.height + k],
-                    im: buffer[i_bot*self.height + k_rev],
+                    re: buffer[x_rev*self.height + y],
+                    im: buffer[x_rev*self.height + y_bottom],
                 };
 
                 // Apply our "main" twiddle factors.
@@ -154,17 +163,17 @@ impl<T: FftNum> MixedRadix<T> {
                 let main_bottom = input_bottom * main_twiddle;
  
                 // From here, we're going to have a few layers of intermediate values with more or less meaningless names.
-                // Mixed  n here, we're applying the "height twiddles" and "width twiddles" to simulate the twiddle factors that mirror `main_twiddle`
+                // Mixed in here, we're applying the "height twiddles" and "width twiddles" to simulate the twiddle factors that mirror `main_twiddle`
                 let out_bottom = main_bottom * height_twiddle;
-                let out_fwd = main_top + out_bottom;
                 let out_rev_pretwiddle = main_top - out_bottom;
+                let out_fwd = main_top + out_bottom;
                 let out_rev = out_rev_pretwiddle.conj() * width_twiddle;
     
                 // All of our intermediate values are done, the only thing left is to combine them and write them out
-                buffer[i*self.height + k]           = out_fwd.re;
-                buffer[i_bot*self.height + k]       = out_fwd.im;
-                buffer[i*self.height + k_rev]       = out_rev.re;
-                buffer[i_bot*self.height + k_rev]   = out_rev.im;
+                buffer[x*self.height + y]            = out_fwd.re;
+                buffer[x*self.height + y_bottom]     = out_rev.re;
+                buffer[x_rev*self.height + y]        = out_fwd.im;
+                buffer[x_rev*self.height + y_bottom] = out_rev.im;
             }
         }
     }
