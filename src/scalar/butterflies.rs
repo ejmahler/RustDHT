@@ -120,7 +120,7 @@ impl<T: FftNum> Butterfly2<T> {
         Self { _phantom: std::marker::PhantomData, }
     }
     #[inline(always)]
-    unsafe fn perform_dht_strided(left: &mut T, right: &mut T) {
+    pub(crate) fn perform_dht_strided(left: &mut T, right: &mut T) {
         let temp = *left + *right;
 
         *right = *left - *right;
