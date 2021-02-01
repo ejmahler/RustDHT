@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use test::Bencher;
 
-use rustdht::{Dht, scalar::{Butterfly16, Butterfly2, Butterfly4, Butterfly8, MixedRadix, MixedRadix4xn}};
+use rustdht::{Dht, scalar::{Butterfly16, Butterfly2, Butterfly4, Butterfly8, MixedRadix, MixedRadix4xn, Radix4}};
 use rustfft::{FftNum, Length};
 
 struct Noop {
@@ -109,3 +109,24 @@ fn bench_4xn_radix4(b: &mut Bencher, len: usize) {
 #[bench] fn bench_4xn_radix4_16384(b: &mut Bencher) { bench_4xn_radix4(b, 16384); }
 #[bench] fn bench_4xn_radix4_32768(b: &mut Bencher) { bench_4xn_radix4(b, 32768); }
 #[bench] fn bench_4xn_radix4_65536(b: &mut Bencher) { bench_4xn_radix4(b, 65536); }
+
+fn bench_direct_radix4(b: &mut Bencher, len: usize) {
+
+    let dht = Arc::new(Radix4::new(len)) as Arc<dyn Dht<f32>>;
+
+    let mut buffer = vec![0_f32; dht.len()];
+    let mut scratch = vec![0_f32; dht.get_inplace_scratch_len()];
+    b.iter(|| {dht.process_with_scratch(&mut buffer, &mut scratch);} );
+}
+
+#[bench] fn bench_direct_radix4_00016(b: &mut Bencher) { bench_direct_radix4(b, 16); }
+#[bench] fn bench_direct_radix4_00032(b: &mut Bencher) { bench_direct_radix4(b, 32); }
+#[bench] fn bench_direct_radix4_00064(b: &mut Bencher) { bench_direct_radix4(b, 64); }
+#[bench] fn bench_direct_radix4_00128(b: &mut Bencher) { bench_direct_radix4(b, 128); }
+#[bench] fn bench_direct_radix4_00256(b: &mut Bencher) { bench_direct_radix4(b, 256); }
+#[bench] fn bench_direct_radix4_00512(b: &mut Bencher) { bench_direct_radix4(b, 512); }
+#[bench] fn bench_direct_radix4_01024(b: &mut Bencher) { bench_direct_radix4(b, 1024); }
+#[bench] fn bench_direct_radix4_02048(b: &mut Bencher) { bench_direct_radix4(b, 2048); }
+#[bench] fn bench_direct_radix4_16384(b: &mut Bencher) { bench_direct_radix4(b, 16384); }
+#[bench] fn bench_direct_radix4_32768(b: &mut Bencher) { bench_direct_radix4(b, 32768); }
+#[bench] fn bench_direct_radix4_65536(b: &mut Bencher) { bench_direct_radix4(b, 65536); }

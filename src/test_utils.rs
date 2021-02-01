@@ -78,9 +78,6 @@ pub fn check_dht_algorithm<T: FftNum + Float + SampleUniform>(
 
         fft.process(&mut buffer);
 
-        dbg!(&buffer);
-        dbg!(&expected_output);
-
         assert!(
             compare_real_vectors(&expected_output, &buffer),
             "process() failed, length = {}",
