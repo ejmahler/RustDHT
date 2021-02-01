@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use test::Bencher;
 
-use rustdht::{Dht, scalar::{Butterfly2, Butterfly4, MixedRadix, MixedRadix4xn}};
+use rustdht::{Dht, scalar::{Butterfly16, Butterfly2, Butterfly4, Butterfly8, MixedRadix, MixedRadix4xn}};
 use rustfft::{FftNum, Length};
 
 struct Noop {
@@ -83,6 +83,8 @@ fn make_4xn_radix4(len: usize) -> Arc<dyn Dht<f32>> {
         0|1 => panic!(),
         2 => Arc::new(Butterfly2::new()),
         4 => Arc::new(Butterfly4::new()),
+        8 => Arc::new(Butterfly8::new()),
+        16 => Arc::new(Butterfly16::new()),
         _ => Arc::new(MixedRadix4xn::new(make_4xn_radix4(len/4))),
     }
 }

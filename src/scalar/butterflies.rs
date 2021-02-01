@@ -1,3 +1,4 @@
+use num_complex::Complex;
 use rustfft::FftNum;
 
 use crate::array_utils;
@@ -127,6 +128,14 @@ impl<T: FftNum> Butterfly2<T> {
         *left = temp;
     }
     #[inline(always)]
+    pub(crate) unsafe fn perform_dht_indexed(buffer: &mut [T], index0: usize, index1: usize) {
+        let input0 = *buffer.get_unchecked(index0);
+        let input1 = *buffer.get_unchecked(index1);
+
+        *buffer.get_unchecked_mut(index0) = input0 + input1;
+        *buffer.get_unchecked_mut(index1) = input0 - input1;
+    }
+    #[inline(always)]
     unsafe fn perform_dht_contiguous(
         &self,
         input: RawSlice<T>,
@@ -231,8 +240,9 @@ impl<T: FftNum> Butterfly8<T> {
         input: RawSlice<T>,
         output: RawSliceMut<T>,
     ) {
-        // Algorithm from https://arxiv.org/pdf/1502.01038.pdf "Matrix expansions for computing the Discrete Hartley Transform for blocklength N%4==0" by Oliveira, and Campello de Souza
-        // This is basically a radix 2 decomposition.
+        // Algorithm from https://www.researchgate.net/publication/261048572_Matrix_expansions_for_computing_the_discrete_hartley_transform_for_blocklength_N_0_mod_4
+        // "Matrix expansions for computing the Discrete Hartley Transform for blocklength N%4==0" by Oliveira and Campello de Souza
+        // This is basically a radix 2 decomposition, with a few twiddle factors merged, etc
         let mut chunk0 = [
             input.load(0),
             input.load(4),
@@ -277,6 +287,88 @@ impl<T: FftNum> Butterfly8<T> {
     }
 }
 
+pub struct Butterfly16<T> {
+    butterfly8: Butterfly8<T>,
+    twiddle: Complex<T>,
+}
+boilerplate_fft_butterfly!(Butterfly16, 16);
+impl<T: FftNum> Butterfly16<T> {
+    #[inline(always)]
+    pub fn new() -> Self {
+        Self { 
+            butterfly8: Butterfly8::new(),
+            twiddle: twiddles::compute_dft_twiddle_inverse(1, 16),
+        }
+    }
+    #[inline(always)]
+    unsafe fn perform_dht_contiguous(
+        &self,
+        input: RawSlice<T>,
+        output: RawSliceMut<T>,
+    ) {
+        // Algorithm from https://pdfs.semanticscholar.org/4ff6/43d640ff796e44669a780bd9a6de9f18118e.pdf
+        // "Split-radix fast Hartley transform" by Pei, Wu
+        let mut chunk0 = [
+            input.load(0),
+            input.load(1),
+            input.load(2),
+            input.load(3),
+            input.load(4),
+            input.load(5),
+            input.load(6),
+            input.load(7),
+        ];
+        let mut chunk1 = [
+            input.load(8),
+            input.load(9),
+            input.load(10),
+            input.load(11),
+            input.load(12),
+            input.load(13),
+            input.load(14),
+            input.load(15),
+        ];
+
+        // first step is a set of butterfly 2's between the first half and second half
+        for i in 0..8 {
+            Butterfly2::perform_dht_strided(&mut chunk0[i], &mut chunk1[i]);
+        }
+        
+        // second step is to do a butterfly 8 on the first half, and write the results out to the even-indexed outputs
+        // Writing these out now frees up registers, to minimize the amount stack space we need
+        self.butterfly8.perform_dht_butterfly(&mut chunk0);
+        for i in 0..8 {
+            output.store(chunk0[i], i*2);
+        }
+
+        // third step: apply some twiddle factors to the second half
+        Butterfly2::perform_dht_indexed(&mut chunk1, 0, 4);
+        Butterfly2::perform_dht_indexed(&mut chunk1, 1, 3);
+        Butterfly2::perform_dht_indexed(&mut chunk1, 7, 5);
+
+        let mut post_twiddle = [
+            chunk1[0],
+            chunk1[1] * self.twiddle.re + chunk1[5] * self.twiddle.im,
+            chunk1[2] * self.butterfly8.twiddle,
+            chunk1[1] * self.twiddle.im - chunk1[5] * self.twiddle.re,
+            chunk1[4],
+            chunk1[3] * self.twiddle.im + chunk1[7] * self.twiddle.re,
+            chunk1[6] * self.butterfly8.twiddle,
+            chunk1[3] * self.twiddle.re - chunk1[7] * self.twiddle.im,
+        ];
+
+        // Step 4: Inner DHTs of size N/4
+        let (post_twiddle1, post_twiddle3) = post_twiddle.split_at_mut(4);
+        Butterfly4::new().perform_dht_butterfly(post_twiddle1);
+        Butterfly4::new().perform_dht_butterfly(post_twiddle3);
+
+        for i in 0..4 {
+            output.store(post_twiddle1[i], i*4 + 1);
+            output.store(post_twiddle3[i], i*4 + 3);
+        }
+    }
+}
+
 
 #[cfg(test)]
 mod unit_tests {
@@ -301,4 +393,5 @@ mod unit_tests {
     test_butterfly_func!(test_butterfly3, Butterfly3, 3);
     test_butterfly_func!(test_butterfly4, Butterfly4, 4);
     test_butterfly_func!(test_butterfly8, Butterfly8, 8);
+    test_butterfly_func!(test_butterfly16, Butterfly16, 16);
 }
