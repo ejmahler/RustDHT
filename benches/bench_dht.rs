@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use test::Bencher;
 
-use rustdht::{Dht, scalar::{Butterfly16, Butterfly2, Butterfly4, Butterfly8, MixedRadix, MixedRadix4xn, Radix4}};
+use rustdht::{Dht, scalar::{Butterfly1, Butterfly16, Butterfly2, Butterfly4, Butterfly8, MixedRadix, MixedRadix4xn, Radix4, SplitRadix}};
 use rustfft::{FftNum, Length};
 
 struct Noop {
@@ -130,3 +130,46 @@ fn bench_direct_radix4(b: &mut Bencher, len: usize) {
 #[bench] fn bench_direct_radix4_16384(b: &mut Bencher) { bench_direct_radix4(b, 16384); }
 #[bench] fn bench_direct_radix4_32768(b: &mut Bencher) { bench_direct_radix4(b, 32768); }
 #[bench] fn bench_direct_radix4_65536(b: &mut Bencher) { bench_direct_radix4(b, 65536); }
+
+fn make_splitradix(len: usize) -> Arc<dyn Dht<f32>> {
+    let mut transforms = vec![
+        Arc::new(Butterfly1::new()) as Arc<dyn Dht<f32>>,
+        Arc::new(Butterfly2::new()),
+        Arc::new(Butterfly4::new()),
+        Arc::new(Butterfly8::new()),
+        Arc::new(Butterfly16::new()),
+    ];
+
+    let index = len.trailing_zeros() as usize;
+    while transforms.len() <= index {
+        let quarter = Arc::clone(&transforms[transforms.len() - 2]);
+        let half = Arc::clone(&transforms[transforms.len() - 1]);
+
+        transforms.push(Arc::new(SplitRadix::new(quarter, half)));
+    }
+
+    Arc::clone(transforms.last().unwrap())
+}
+
+
+fn bench_splitradix(b: &mut Bencher, len: usize) {
+
+    let dht = make_splitradix(len);
+    assert_eq!(dht.len(), len);
+
+    let mut buffer = vec![0_f32; dht.len()];
+    let mut scratch = vec![0_f32; dht.get_inplace_scratch_len()];
+    b.iter(|| { dht.process_with_scratch(&mut buffer, &mut scratch); });
+}
+
+#[bench] fn bench_splitradix_00016(b: &mut Bencher) { bench_splitradix(b, 16); }
+#[bench] fn bench_splitradix_00032(b: &mut Bencher) { bench_splitradix(b, 32); }
+#[bench] fn bench_splitradix_00064(b: &mut Bencher) { bench_splitradix(b, 64); }
+#[bench] fn bench_splitradix_00128(b: &mut Bencher) { bench_splitradix(b, 128); }
+#[bench] fn bench_splitradix_00256(b: &mut Bencher) { bench_splitradix(b, 256); }
+#[bench] fn bench_splitradix_00512(b: &mut Bencher) { bench_splitradix(b, 512); }
+#[bench] fn bench_splitradix_01024(b: &mut Bencher) { bench_splitradix(b, 1024); }
+#[bench] fn bench_splitradix_02048(b: &mut Bencher) { bench_splitradix(b, 2048); }
+#[bench] fn bench_splitradix_16384(b: &mut Bencher) { bench_splitradix(b, 16384); }
+#[bench] fn bench_splitradix_32768(b: &mut Bencher) { bench_splitradix(b, 32768); }
+#[bench] fn bench_splitradix_65536(b: &mut Bencher) { bench_splitradix(b, 65536); }
