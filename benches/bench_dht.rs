@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use test::Bencher;
 
-use rustdht::{Dht, scalar::{Butterfly1, Butterfly16, Butterfly2, Butterfly4, Butterfly8, MixedRadix, MixedRadix4xn, Radix4, SplitRadix}};
+use rustdht::{Dht, scalar::{Butterfly1, Butterfly16, Butterfly2, Butterfly3, Butterfly4, Butterfly8, Butterfly9, MixedRadix, MixedRadix3xn, MixedRadix4xn, Radix4, SplitRadix}};
 use rustfft::{FftNum, Length};
 
 struct Noop {
@@ -173,3 +173,32 @@ fn bench_splitradix(b: &mut Bencher, len: usize) {
 #[bench] fn bench_splitradix_16384(b: &mut Bencher) { bench_splitradix(b, 16384); }
 #[bench] fn bench_splitradix_32768(b: &mut Bencher) { bench_splitradix(b, 32768); }
 #[bench] fn bench_splitradix_65536(b: &mut Bencher) { bench_splitradix(b, 65536); }
+
+fn make_3xn_radix3(len: usize) -> Arc<dyn Dht<f32>> {
+    match len {
+        0|1 => panic!(),
+        3 => Arc::new(Butterfly3::new()),
+        9 => Arc::new(Butterfly9::new()),
+        _ => Arc::new(MixedRadix3xn::new(make_3xn_radix3(len/3))),
+    }
+}
+
+fn bench_3xn_radix3(b: &mut Bencher, len: usize) {
+
+    let dht = make_3xn_radix3(len);
+    assert_eq!(dht.len(), len);
+
+    let mut buffer = vec![0_f32; dht.len()];
+    let mut scratch = vec![0_f32; dht.get_inplace_scratch_len()];
+    b.iter(|| {dht.process_with_scratch(&mut buffer, &mut scratch);} );
+}
+
+#[bench] fn bench_3xn_radix3_00003(b: &mut Bencher) { bench_3xn_radix3(b, 3); }
+#[bench] fn bench_3xn_radix3_00009(b: &mut Bencher) { bench_3xn_radix3(b, 9); }
+#[bench] fn bench_3xn_radix3_00027(b: &mut Bencher) { bench_3xn_radix3(b, 27); }
+#[bench] fn bench_3xn_radix3_00081(b: &mut Bencher) { bench_3xn_radix3(b, 81); }
+#[bench] fn bench_3xn_radix3_00243(b: &mut Bencher) { bench_3xn_radix3(b, 243); }
+#[bench] fn bench_3xn_radix3_02187(b: &mut Bencher) { bench_3xn_radix3(b, 2187); }
+#[bench] fn bench_3xn_radix3_06561(b: &mut Bencher) { bench_3xn_radix3(b, 6561); }
+#[bench] fn bench_3xn_radix3_19683(b: &mut Bencher) { bench_3xn_radix3(b, 19683); }
+#[bench] fn bench_3xn_radix3_59049(b: &mut Bencher) { bench_3xn_radix3(b, 59049); }

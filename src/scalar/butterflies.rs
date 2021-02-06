@@ -15,6 +15,11 @@ macro_rules! boilerplate_fft_butterfly {
             pub(crate) unsafe fn perform_dht_butterfly(&self, buffer: &mut [T]) {
                 self.perform_dht_contiguous(RawSlice::new(buffer), RawSliceMut::new(buffer));
             }
+            #[allow(dead_code)]
+            #[inline(always)]
+            pub(crate) fn perform_dht_array(&self, buffer: &mut [T; $len]) {
+                unsafe { self.perform_dht_contiguous(RawSlice::new(buffer), RawSliceMut::new(buffer)) };
+            }
         }
         impl<T: FftNum> Dht<T> for $struct_name<T> {
             fn process_outofplace_with_scratch(
@@ -287,6 +292,95 @@ impl<T: FftNum> Butterfly8<T> {
     }
 }
 
+
+pub struct Butterfly9<T> {
+    butterfly3_twiddle: T,
+    twiddle1: Complex<T>,
+    twiddle2: Complex<T>,
+    twiddle4: Complex<T>,
+}
+boilerplate_fft_butterfly!(Butterfly9, 9);
+impl<T: FftNum> Butterfly9<T> {
+    #[inline(always)]
+    pub fn new() -> Self {
+        let butterfly_twiddle =  twiddles::compute_dft_twiddle_forward::<T>(1, 3);
+        Self {
+            butterfly3_twiddle: butterfly_twiddle.re - butterfly_twiddle.im,
+            twiddle1: twiddles::compute_dft_twiddle_inverse(1, 9),
+            twiddle2: twiddles::compute_dft_twiddle_inverse(2, 9),
+            twiddle4: twiddles::compute_dft_twiddle_inverse(4, 9),
+        }
+    }
+    #[inline(always)]
+    unsafe fn perform_dht_contiguous(
+        &self,
+        input: RawSlice<T>,
+        output: RawSliceMut<T>,
+    ) {
+        // Algorithm: https://www.researchgate.net/publication/3315015_Fast_Radix-39_Discrete_Hartley_Transform
+        // "Fast Radix-3/9 Discrete Hartley Transform" by Lun, Siu
+        // The formatting of the code is a garbage fire - I just took it dorectly out of the paper, line for line.
+        // It works and it's fast, it just needs to be clenaed up.
+        let t1: T = (input.load(3) - input.load(6)) * self.butterfly3_twiddle;
+        let t2: T = input.load(0) - input.load(6);
+        let t3: T = input.load(0) - input.load(3);
+        let w1: T = t2 + t1;
+        let w2: T = t3 - t1;
+        //
+        let x0: T = input.load(0) + input.load(3) + input.load(6);
+        let x3: T = input.load(1) + input.load(4) + input.load(7);
+        let x6: T = input.load(2) + input.load(5) + input.load(8);
+        let t1: T = (x3 - x6) * self.butterfly3_twiddle;
+        let t2: T = x0 + x3 + x6;
+        let t3: T = x0 - x6 + t1;
+        let x6: T = x0 - x3 - t1;
+        let x3: T = t3;
+        let x0: T = t2;
+        //
+        let t1: T = input.load(7) - input.load(4);
+        let t2: T = input.load(8) - input.load(5);
+        let t3: T = input.load(1) - input.load(4);
+        let t4: T = input.load(2) - input.load(5);
+        let v1: T = t1 + t4;
+        let t4: T = t1 - t4;
+        let t1: T = v1;
+        let v2: T = t2 + t3;
+        let t3: T = t2 - t3;
+        let t2: T = v2;
+        let v1: T = (t1 - t2) * self.twiddle4.re;
+        let v2: T = t1 * self.twiddle2.re;
+        let v3: T = t2 * self.twiddle1.re;
+        let t1: T = v1 - v3;
+        let t2: T = -v1 - v2;
+        let v1: T = (t3 + t4) * self.twiddle4.im;
+        let v2: T = t3 * self.twiddle1.im;
+        let v3: T = t4 * self.twiddle2.im;
+        let t3: T = -v1 - v2;
+        let t4: T = v3 - v1;
+        let x2: T = t1 + t3;
+        let x4: T = t2 + t4;
+        let x7: T = t1 - t3;
+        let x5: T = t2 - t4;
+        let x1: T = -x7 - x4 + w1;
+        let x8: T = -x5 - x2 + w2;
+        let x2 = x2 + w2;
+        let x4 = x4 + w1;
+        let x7 = x7 + w1;
+        let x5 = x5 + w2;
+
+        output.store(x0, 0);
+        output.store(x1, 1);
+        output.store(x2, 2);
+        output.store(x3, 3);
+        output.store(x4, 4);
+        output.store(x5, 5);
+        output.store(x6, 6);
+        output.store(x7, 7);
+        output.store(x8, 8);
+    }
+}
+
+
 pub struct Butterfly16<T> {
     butterfly8: Butterfly8<T>,
     twiddle: Complex<T>,
@@ -393,5 +487,6 @@ mod unit_tests {
     test_butterfly_func!(test_butterfly3, Butterfly3, 3);
     test_butterfly_func!(test_butterfly4, Butterfly4, 4);
     test_butterfly_func!(test_butterfly8, Butterfly8, 8);
+    test_butterfly_func!(test_butterfly9, Butterfly9, 9);
     test_butterfly_func!(test_butterfly16, Butterfly16, 16);
 }
