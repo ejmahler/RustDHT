@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use test::Bencher;
 
-use rustdht::{Dht, scalar::{Butterfly1, Butterfly16, Butterfly2, Butterfly3, Butterfly4, Butterfly8, Butterfly9, MixedRadix, MixedRadix3xn, MixedRadix4xn, Radix4, SplitRadix}};
+use rustdht::{Dht, scalar::{Butterfly1, Butterfly16, Butterfly2, Butterfly3, Butterfly4, Butterfly5, Butterfly8, Butterfly9, MixedRadix, MixedRadix3xn, MixedRadix4xn, MixedRadix5xn, Radix4, SplitRadix}};
 use rustfft::{FftNum, Length};
 
 struct Noop {
@@ -202,3 +202,29 @@ fn bench_3xn_radix3(b: &mut Bencher, len: usize) {
 #[bench] fn bench_3xn_radix3_06561(b: &mut Bencher) { bench_3xn_radix3(b, 6561); }
 #[bench] fn bench_3xn_radix3_19683(b: &mut Bencher) { bench_3xn_radix3(b, 19683); }
 #[bench] fn bench_3xn_radix3_59049(b: &mut Bencher) { bench_3xn_radix3(b, 59049); }
+
+fn make_5xn_radix5(len: usize) -> Arc<dyn Dht<f32>> {
+    match len {
+        0|1 => panic!(),
+        5 => Arc::new(Butterfly5::new()),
+        _ => Arc::new(MixedRadix5xn::new(make_5xn_radix5(len/5))),
+    }
+}
+
+fn bench_5xn_radix5(b: &mut Bencher, len: usize) {
+
+    let dht = make_5xn_radix5(len);
+    assert_eq!(dht.len(), len);
+
+    let mut buffer = vec![0_f32; dht.len()];
+    let mut scratch = vec![0_f32; dht.get_inplace_scratch_len()];
+    b.iter(|| {dht.process_with_scratch(&mut buffer, &mut scratch);} );
+}
+
+#[bench] fn bench_5xn_radix5_00005(b: &mut Bencher) { bench_5xn_radix5(b, 5); }
+#[bench] fn bench_5xn_radix5_00025(b: &mut Bencher) { bench_5xn_radix5(b, 25); }
+#[bench] fn bench_5xn_radix5_00125(b: &mut Bencher) { bench_5xn_radix5(b, 125); }
+#[bench] fn bench_5xn_radix5_00625(b: &mut Bencher) { bench_5xn_radix5(b, 625); }
+#[bench] fn bench_5xn_radix5_03125(b: &mut Bencher) { bench_5xn_radix5(b, 3125); }
+#[bench] fn bench_5xn_radix5_15625(b: &mut Bencher) { bench_5xn_radix5(b, 15625); }
+#[bench] fn bench_5xn_radix5_78125(b: &mut Bencher) { bench_5xn_radix5(b, 78125); }

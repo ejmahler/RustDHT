@@ -230,6 +230,67 @@ impl<T: FftNum> Butterfly4<T> {
     }
 }
 
+pub struct Butterfly5<T> {
+    twiddle1: Complex<T>,
+    twiddle2: Complex<T>,
+}
+boilerplate_fft_butterfly!(Butterfly5, 5);
+impl<T: FftNum> Butterfly5<T> {
+    #[inline(always)]
+    pub fn new() -> Self {
+        Self {
+            twiddle1: twiddles::compute_dft_twiddle_inverse::<T>(1, 5),
+            twiddle2: twiddles::compute_dft_twiddle_inverse::<T>(2, 5),
+        }
+    }
+    #[inline(always)]
+    unsafe fn perform_dht_contiguous(
+        &self,
+        input: RawSlice<T>,
+        output: RawSliceMut<T>,
+    ) {
+        // Algorithm from https://arxiv.org/pdf/1502.01038.pdf "A factorization scheme for some discrete hartley transform matrices" by Olibeira, Cintra, Campello de Souza
+        let input0 = input.load(0);
+        let input1 = input.load(1);
+        let input2 = input.load(2);
+        let input3 = input.load(3);
+        let input4 = input.load(4);
+
+        let a = [
+            input1 + input4,
+            input1 - input4,
+            input2 + input3,
+            input2 - input3,
+        ];
+
+        let a01 = a[0] * self.twiddle1.re;
+        let a02 = a[0] * self.twiddle2.re;
+        let a11 = a[1] * self.twiddle1.im;
+        let a12 = a[1] * self.twiddle2.im;
+        let a21 = a[2] * self.twiddle1.re;
+        let a22 = a[2] * self.twiddle2.re;
+        let a31 = a[3] * self.twiddle1.im;
+        let a32 = a[3] * self.twiddle2.im;
+
+        let a01a22 = a01 + a22;
+        let a02a21 = a02 + a21;
+        let a11a32 = a11 + a32;
+        let a12a31 = a12 - a31;
+
+        let out0: T = input0 + a[0] + a[2];
+        let out1: T = input0 + a01a22 + a11a32;
+        let out2: T = input0 + a02a21 + a12a31;
+        let out3: T = input0 + a02a21 - a12a31;
+        let out4: T = input0 + a01a22 - a11a32;
+
+        output.store(out0, 0);
+        output.store(out1, 1);
+        output.store(out2, 2);
+        output.store(out3, 3);
+        output.store(out4, 4);
+    }
+}
+
 pub struct Butterfly8<T> {
     twiddle: T,
 }
@@ -486,6 +547,7 @@ mod unit_tests {
     test_butterfly_func!(test_butterfly2, Butterfly2, 2);
     test_butterfly_func!(test_butterfly3, Butterfly3, 3);
     test_butterfly_func!(test_butterfly4, Butterfly4, 4);
+    test_butterfly_func!(test_butterfly5, Butterfly5, 5);
     test_butterfly_func!(test_butterfly8, Butterfly8, 8);
     test_butterfly_func!(test_butterfly9, Butterfly9, 9);
     test_butterfly_func!(test_butterfly16, Butterfly16, 16);

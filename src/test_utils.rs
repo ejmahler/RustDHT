@@ -77,7 +77,7 @@ pub fn check_dht_algorithm<T: FftNum + Float + SampleUniform>(
         let mut buffer = reference_input.clone();
 
         fft.process(&mut buffer);
-
+        
         assert!(
             compare_real_vectors(&expected_output, &buffer),
             "process() failed, length = {}",
