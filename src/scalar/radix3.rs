@@ -10,7 +10,6 @@ use super::Butterfly3;
 
 pub struct MixedRadix3xn<T> {
     twiddles: Box<[Complex<T>]>,
-    butterfly3_twiddle: Complex<T>,
 
     height_size_fft: Arc<dyn Dht<T>>,
     height: usize,
@@ -70,7 +69,6 @@ impl<T: FftNum> MixedRadix3xn<T> {
             ;
         Self {
             twiddles: twiddles.into_boxed_slice(),
-            butterfly3_twiddle: twiddles::compute_dft_twiddle_inverse::<T>(1, 3),
 
             height_size_fft: height_dht,
             height,
@@ -117,24 +115,15 @@ impl<T: FftNum> MixedRadix3xn<T> {
 
         
         for (column, twiddle_chunk) in (1..self.height/2 + 1).zip(self.twiddles.chunks_exact(2)) {
-             // we need -k % height, but k is unsigned, so do it without actual negatives
-            let column_rev = self.height - column;
-
-            let mut tmp_rev = [Zero::zero(); 3];
-            tmp_rev[0] = split_buffer[0][column_rev];
-
-            let fwd_top_twiddle = twiddle_chunk[0];
-            let fwd_bot_twiddle = twiddle_chunk[1];
-
             let input_fwd = [
                 split_buffer[0][column],
                 split_buffer[1][column],
                 split_buffer[2][column],
             ];
             let input_rev = [
-                split_buffer[0][column_rev],
-                split_buffer[1][column_rev],
-                split_buffer[2][column_rev],
+                split_buffer[0][self.height - column],
+                split_buffer[1][self.height - column],
+                split_buffer[2][self.height - column],
             ];
 
             let sum = [
@@ -146,10 +135,10 @@ impl<T: FftNum> MixedRadix3xn<T> {
                 input_fwd[2] - input_rev[2]
             ];
 
-            let a = fwd_top_twiddle.re * sum[0] - fwd_top_twiddle.im * diff[0];
-            let b = fwd_bot_twiddle.re * diff[1] + fwd_bot_twiddle.im * sum[1];
-            let c = fwd_bot_twiddle.re * sum[1] - fwd_bot_twiddle.im * diff[1];
-            let d = fwd_top_twiddle.re * diff[0] + fwd_top_twiddle.im * sum[0];
+            let a = twiddle_chunk[0].re * sum[0]  - twiddle_chunk[0].im * diff[0];
+            let b = twiddle_chunk[1].re * diff[1] + twiddle_chunk[1].im * sum[1];
+            let c = twiddle_chunk[1].re * sum[1]  - twiddle_chunk[1].im * diff[1];
+            let d = twiddle_chunk[0].re * diff[0] + twiddle_chunk[0].im * sum[0];
             let e = a - b;
             let f = c - d;
 
@@ -161,8 +150,8 @@ impl<T: FftNum> MixedRadix3xn<T> {
 
             let mut tmp_rev = [
                 input_rev[0],
-                self.butterfly3_twiddle.re * e - self.butterfly3_twiddle.im * f,
-                self.butterfly3_twiddle.re * f + self.butterfly3_twiddle.im * e,
+                f,
+                e,
             ];
 
             self.butterfly3.perform_dht_array(&mut tmp_fwd);
@@ -172,9 +161,9 @@ impl<T: FftNum> MixedRadix3xn<T> {
             split_buffer[1][column] = tmp_fwd[1];
             split_buffer[2][column] = tmp_fwd[2];
 
-            split_buffer[0][column_rev] = tmp_rev[0];
-            split_buffer[1][column_rev] = tmp_rev[1];
-            split_buffer[2][column_rev] = tmp_rev[2];
+            split_buffer[0][self.height - column] = tmp_rev[2];
+            split_buffer[1][self.height - column] = tmp_rev[1];
+            split_buffer[2][self.height - column] = tmp_rev[0];
         }
     }
 
