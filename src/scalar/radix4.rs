@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use num_complex::Complex;
-use num_traits::Zero;
 use rustfft::{FftNum, Length};
 
 use crate::{Dht, array_utils, dht_error_inplace, dht_error_outofplace, twiddles};
@@ -160,14 +159,12 @@ impl<T: FftNum> MixedRadix4xn<T> {
         }
     }
 
-    fn perform_dht_inplace(&self, buffer: &mut [T], _scratch: &mut [T]) {
-        let mut scratch = vec![Zero::zero(); buffer.len()];
-
+    fn perform_dht_inplace(&self, buffer: &mut [T], scratch: &mut [T]) {
         // Step 1: Transpose the width x height array to height x width
-        transpose::transpose(buffer, &mut scratch, 4, self.height);
+        transpose::transpose(buffer, scratch, 4, self.height);
 
         // Step 2: Compute DHTs of size `height` down the rows of our transposed array
-        self.height_size_fft.process_outofplace_with_scratch(&mut scratch, buffer, &mut []);
+        self.height_size_fft.process_outofplace_with_scratch(scratch, buffer, &mut []);
 
         // Step 3: Apply twiddle factors
         self.apply_twiddles(buffer);
