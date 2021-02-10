@@ -28,8 +28,6 @@ use crate::{Dht, array_utils, dht_error_inplace, dht_error_outofplace, twiddles}
 /// ~~~
 pub struct MixedRadix<T> {
     twiddles: Box<[Complex<T>]>,
-    twiddles_width: Box<[Complex<T>]>,
-    twiddles_height: Box<[Complex<T>]>,
 
     width_size_fft: Arc<dyn Dht<T>>,
     width: usize,
@@ -50,23 +48,21 @@ impl<T: FftNum> MixedRadix<T> {
 
         let len = width * height;
 
-        let width_limit = width / 2 + 1;
-        let height_limit = height / 2 + 1;
+        let row_limit = width / 2 + 1;
+        let column_limit = height / 2 + 1;
 
-        let mut twiddles = Vec::with_capacity(width_limit * height_limit);
-        for x in 1..width_limit {
-            for y in 1..height_limit {
-                let twiddle = twiddles::compute_dft_twiddle_forward::<T>(x * y, len);
-                let diffsum = Complex {
-                    re: twiddle.re + twiddle.im,
-                    im: twiddle.re - twiddle.im,
-                };
-                twiddles.push(diffsum * T::from_f32(0.5).unwrap());
+        let mut twiddles = Vec::with_capacity(row_limit * column_limit);
+        let root2 = T::from_f32(0.5f32.sqrt()).unwrap();
+        for row in 1..row_limit {
+            for column in 1..column_limit {
+                // Our twiddle will be a one-eigth turn around the circle from what the basic "row * column" twiddle would have been, times sqrt(0.5)
+                // The one-eigth turn times the sqrt comes fro mthe fact that we factored a
+                // (twiddle.re - twiddle.im) and (twiddle.re + twiddle.im) out of every single twiddle multiplication in `apply_twiddles`, and that's equivalent to an eigth turn
+                let twiddle = twiddles::compute_dft_twiddle_inverse::<T>(row * column * 8 + len, len * 8) * root2;
+
+                twiddles.push(twiddle);
             }
         }
-
-        let twiddles_width = (1..width_limit).map(|i| twiddles::compute_dft_twiddle_inverse(i, width)).collect::<Box<[_]>>();
-        let twiddles_height = (1..height_limit).map(|k| twiddles::compute_dft_twiddle_forward(k, height)).collect::<Box<[_]>>();
 
         // Collect some data about what kind of scratch space our inner DHTs need
         let height_inplace_scratch = height_dht.get_inplace_scratch_len();
@@ -103,8 +99,6 @@ impl<T: FftNum> MixedRadix<T> {
 
         Self {
             twiddles: twiddles.into_boxed_slice(),
-            twiddles_width,
-            twiddles_height,
 
             width_size_fft: width_dht,
             width: width,
@@ -133,47 +127,52 @@ impl<T: FftNum> MixedRadix<T> {
         // In these situations, we *could* split out the loop and handle these special cases to optimize out the redundant floating point ops
         // but that adds significant complexity, and benchmarking shows that the added complexity actually hurts performance more than the reduced ops helps
 
-        let width_limit = self.width / 2 + 1;
-        let height_limit = self.height / 2 + 1;
-        let twiddle_stride = self.twiddles_height.len();
+        let row_limit = (self.width + 1) / 2;
+        let column_limit = self.height / 2 + 1;
+        let twiddle_stride = column_limit - 1;
 
         if self.width < 2 || self.height < 2 {
             return;
         }
 
-        for (x, (width_twiddle, main_twiddle_chunk)) in (1..width_limit).zip(self.twiddles_width.iter().zip(self.twiddles.chunks_exact(twiddle_stride))) {
-            let x_rev = self.width - x;
+        let mut twiddles_iter = self.twiddles.chunks_exact(twiddle_stride);
+        for (row, twiddle_chunk) in (1..row_limit).zip(twiddles_iter.by_ref()) {
+            let row_rev = self.width - row;
             
-            for (y, (height_twiddle, main_twiddle)) in (1..height_limit).zip(self.twiddles_height.iter().zip(main_twiddle_chunk.iter())) {
-                let y_bottom = self.height - y;
+            for (column,  twiddle) in (1..column_limit).zip(twiddle_chunk.iter()) {
+                let column_rev = self.height - column;
 
-                // The way the math falls out, we can treat the forward value and reverse value of each row as a complex number,
-                // with the forward value as real, and the reverse value as complex
-                let input_top = Complex {
-                    re: buffer[x*self.height + y],
-                    im: buffer[x*self.height + y_bottom],
-                };
-                let input_bottom = Complex {
-                    re: buffer[x_rev*self.height + y],
-                    im: buffer[x_rev*self.height + y_bottom],
-                };
+                let input_top_fwd = buffer[self.height * row + column];
+                let input_top_rev = buffer[self.height * row + column_rev];
+                let input_bot_fwd = buffer[self.height * row_rev + column];
+                let input_bot_rev = buffer[self.height * row_rev + column_rev];
 
-                // Apply our "main" twiddle factors.
-                let main_top = input_top.conj() * main_twiddle;
-                let main_bottom = input_bottom * main_twiddle;
- 
-                // From here, we're going to have a few layers of intermediate values with more or less meaningless names.
-                // Mixed in here, we're applying the "height twiddles" and "width twiddles" to simulate the twiddle factors that mirror `main_twiddle`
-                let out_bottom = main_bottom * height_twiddle;
-                let out_rev_pretwiddle = main_top - out_bottom;
-                let out_fwd = main_top + out_bottom;
-                let out_rev = out_rev_pretwiddle.conj() * width_twiddle;
-    
-                // All of our intermediate values are done, the only thing left is to combine them and write them out
-                buffer[x*self.height + y]            = out_fwd.re;
-                buffer[x*self.height + y_bottom]     = out_rev.re;
-                buffer[x_rev*self.height + y]        = out_fwd.im;
-                buffer[x_rev*self.height + y_bottom] = out_rev.im;
+                let out_top_fwd = input_top_fwd + input_bot_rev;
+                let out_top_rev = input_bot_fwd + input_top_rev;
+                let out_bot_fwd = input_bot_fwd - input_top_rev;
+                let out_bot_rev = input_top_fwd - input_bot_rev;
+
+                buffer[self.height * row + column]          = twiddle.re * out_top_fwd - twiddle.im * out_bot_fwd;
+                buffer[self.height * row + column_rev]      = twiddle.re * out_top_rev - twiddle.im * out_bot_rev;
+                buffer[self.height * row_rev + column]      = twiddle.re * out_bot_fwd + twiddle.im * out_top_fwd;
+                buffer[self.height * row_rev + column_rev]  = twiddle.re * out_bot_rev + twiddle.im * out_top_rev;
+            }
+        }
+        if self.width % 2 == 0 {
+            let row = self.width / 2;
+            let main_twiddle_chunk = twiddles_iter.next().unwrap();
+
+            for (column, twiddle) in (1..column_limit).zip(main_twiddle_chunk.iter()) {
+                let column_rev = self.height - column;
+
+                let input_top_fwd = buffer[self.height * row + column];
+                let input_top_rev = buffer[self.height * row + column_rev];
+
+                let out_top_fwd = input_top_fwd - input_top_rev;
+                let out_bot_fwd = input_top_fwd + input_top_rev;
+
+                buffer[self.height * row + column]      = twiddle.re * out_top_fwd + twiddle.im * out_bot_fwd;
+                buffer[self.height * row + column_rev]  = twiddle.re * out_bot_fwd - twiddle.im * out_top_fwd;
             }
         }
     }
@@ -191,6 +190,13 @@ impl<T: FftNum> MixedRadix<T> {
         } else {
             &mut buffer[..]
         };
+
+        let reversal_row_begin = if self.width % 2 == 0 { self.width / 2 + 1 } else { (self.width + 1) / 2 };
+        let second_half = &mut scratch[reversal_row_begin * self.height..];
+        for chunk in second_half.chunks_exact_mut(self.height) {
+            chunk.reverse();
+        }
+
         self.height_size_fft
             .process_with_scratch(scratch, height_scratch);
 
@@ -203,6 +209,13 @@ impl<T: FftNum> MixedRadix<T> {
         // STEP 5: perform DHTs of size `width`
         self.width_size_fft
             .process_outofplace_with_scratch(buffer, scratch, inner_scratch);
+
+        // reverse the second half of the width DHT output, to finalize our twiddle factors
+        let reversal_row_begin = (self.height + 1) / 2;
+        let second_half = &mut scratch[reversal_row_begin * self.width..];
+        for chunk in second_half.chunks_exact_mut(self.width) {
+            chunk.reverse();
+        }
 
         // STEP 6: transpose again
         transpose::transpose(scratch, buffer, self.width, self.height);
@@ -225,6 +238,13 @@ impl<T: FftNum> MixedRadix<T> {
         } else {
             &mut input[..]
         };
+
+        let reversal_row_begin = if self.width % 2 == 0 { self.width / 2 + 1 } else { (self.width + 1) / 2 };
+        let second_half = &mut output[reversal_row_begin * self.height..];
+        for chunk in second_half.chunks_exact_mut(self.height) {
+            chunk.reverse();
+        }
+
         self.height_size_fft
             .process_with_scratch(output, height_scratch);
 
@@ -243,6 +263,13 @@ impl<T: FftNum> MixedRadix<T> {
         self.width_size_fft
             .process_with_scratch(input, width_scratch);
 
+        // reverse the second half of the width DHT output, to finalize our twiddle factors
+        let reversal_row_begin = (self.height + 1) / 2;
+        let second_half = &mut input[reversal_row_begin * self.width..];
+        for chunk in second_half.chunks_exact_mut(self.width) {
+            chunk.reverse();
+        }
+
         // STEP 6: transpose again
         transpose::transpose(input, output, self.width, self.height);
     }
@@ -260,8 +287,8 @@ mod unit_tests {
 
     #[test]
     fn test_mixed_radix_correct() {
-        for width in 1..7 {
-            for height in 1..7 {
+        for width in 1..9 {
+            for height in 1..9 {
                 test_mixed_radix_with_lengths(width, height);
             }
         }
