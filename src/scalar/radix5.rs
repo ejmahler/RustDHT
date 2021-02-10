@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use num_complex::Complex;
-use num_traits::Zero;
 use rustfft::{FftNum, Length};
 
 use crate::{Dht, array_utils, dht_error_inplace, dht_error_outofplace, twiddles};
@@ -31,13 +30,11 @@ impl<T: FftNum> MixedRadix5xn<T> {
 
         let twiddle_limit = height / 2 + 1;
 
-        let mut twiddles = Vec::with_capacity(twiddle_limit * 4);
-        for x in 1..twiddle_limit {
-            let half = T::from_f32(0.5).unwrap();
-            twiddles.push(twiddles::compute_dft_twiddle_inverse::<T>(x * 1, len) * half);
-            twiddles.push(twiddles::compute_dft_twiddle_inverse::<T>(x * 2, len) * half);
-            twiddles.push(twiddles::compute_dft_twiddle_inverse::<T>(x * 3, len) * half);
-            twiddles.push(twiddles::compute_dft_twiddle_inverse::<T>(x * 4, len) * half);
+        let root2 = T::from_f32(0.5f32.sqrt()).unwrap();
+        let mut twiddles = Vec::with_capacity((twiddle_limit - 1) * 2);
+        for column in 1..twiddle_limit {
+            twiddles.push(twiddles::compute_dft_twiddle_inverse::<T>(column * 1 * 8 + len, len * 8) * root2);
+            twiddles.push(twiddles::compute_dft_twiddle_inverse::<T>(column * 2 * 8 + len, len * 8) * root2);
         }
 
         // Collect some data about what kind of scratch space our inner DHTs need
@@ -120,86 +117,64 @@ impl<T: FftNum> MixedRadix5xn<T> {
 
 
         // Step 3: Apply twiddle factors
-        for (column, twiddle_chunk) in (1..self.height/2+1).zip(self.twiddles.chunks_exact(4)) {
-            // we need -k % self.height, but k is unsigned, so do it without actual negatives
-            let column_rev = self.height - column;
-
-            let twiddle1_fwd = twiddle_chunk[0];
-            let twiddle2_fwd = twiddle_chunk[1];
-            let twiddle3_fwd = twiddle_chunk[2];
-            let twiddle4_fwd = twiddle_chunk[3];
-
-            let input0_fwd = split_buffer[0][column];
-            let input1_fwd = split_buffer[1][column];
-            let input2_fwd = split_buffer[2][column];
-            let input3_fwd = split_buffer[3][column];
-            let input4_fwd = split_buffer[4][column];
-            let input0_rev = split_buffer[0][column_rev];
-            let input1_rev = split_buffer[1][column_rev];
-            let input2_rev = split_buffer[2][column_rev];
-            let input3_rev = split_buffer[3][column_rev];
-            let input4_rev = split_buffer[4][column_rev];
-
-            let sum1 = input1_fwd + input1_rev;
-            let sum2 = input2_fwd + input2_rev;
-            let sum3 = input3_fwd + input3_rev;
-            let sum4 = input4_fwd + input4_rev;
-            let dif1 = input1_fwd - input1_rev;
-            let dif2 = input2_fwd - input2_rev;
-            let dif3 = input3_fwd - input3_rev;
-            let dif4 = input4_fwd - input4_rev;
-
-            let mid1_re: T = twiddle1_fwd.re * sum1 - twiddle1_fwd.im * dif1;
-            let mid2_re: T = twiddle2_fwd.re * sum2 - twiddle2_fwd.im * dif2;
-            let mid3_re: T = twiddle3_fwd.re * sum3 - twiddle3_fwd.im * dif3;
-            let mid4_re: T = twiddle4_fwd.re * sum4 - twiddle4_fwd.im * dif4;
-            let mid4_im: T = twiddle4_fwd.im * sum4 + twiddle4_fwd.re * dif4;
-            let mid3_im: T = twiddle3_fwd.im * sum3 + twiddle3_fwd.re * dif3;
-            let mid2_im: T = twiddle2_fwd.im * sum2 + twiddle2_fwd.re * dif2;
-            let mid1_im: T = twiddle1_fwd.im * sum1 + twiddle1_fwd.re * dif1;
-
+        for (column, twiddle_chunk) in (1..self.height/2+1).zip(self.twiddles.chunks_exact(2)) {
+            let input1fwd = split_buffer[1][column];
+            let input1rev = split_buffer[1][self.height - column];
+            let input4fwd = split_buffer[4][column];
+            let input4rev = split_buffer[4][self.height - column];
+            let input2fwd = split_buffer[2][column];
+            let input2rev = split_buffer[2][self.height - column];
+            let input3fwd = split_buffer[3][column];
+            let input3rev = split_buffer[3][self.height - column];
+            
+            let out1fwd = input1fwd + input4rev;
+            let out1rev = input4fwd + input1rev;
+            let out4fwd = input4fwd - input1rev;
+            let out4rev = input1fwd - input4rev;
+            let out2fwd = input2fwd + input3rev;
+            let out2rev = input3fwd + input2rev;
+            let out3fwd = input3fwd - input2rev;
+            let out3rev = input2fwd - input3rev;
+            
             let mut tmp_fwd = [
-                input0_fwd,
-                mid1_re + mid4_im,
-                mid2_re + mid3_im,
-                mid3_re + mid2_im,
-                mid4_re + mid1_im,
+                split_buffer[0][column],
+                twiddle_chunk[0].re * out1fwd - twiddle_chunk[0].im * out4fwd,
+                twiddle_chunk[1].re * out2fwd - twiddle_chunk[1].im * out3fwd,
+                twiddle_chunk[1].re * out3fwd + twiddle_chunk[1].im * out2fwd,
+                twiddle_chunk[0].re * out4fwd + twiddle_chunk[0].im * out1fwd,
+            ];
+            let mut tmp_rev = [
+                split_buffer[0][self.height - column],
+                twiddle_chunk[0].re * out1rev - twiddle_chunk[0].im * out4rev,
+                twiddle_chunk[1].re * out2rev - twiddle_chunk[1].im * out3rev,
+                twiddle_chunk[1].re * out3rev + twiddle_chunk[1].im * out2rev,
+                twiddle_chunk[0].re * out4rev + twiddle_chunk[0].im * out1rev,
             ];
             
-            let mut tmp_rev = [
-                input0_rev,
-                mid4_re - mid1_im,
-                mid3_re - mid2_im,
-                mid2_re - mid3_im,
-                mid1_re - mid4_im,
-            ];
-
-            self.butterfly5.perform_dht_array(&mut tmp_rev);
-
-            split_buffer[0][column_rev] = tmp_rev[4];
-            split_buffer[1][column_rev] = tmp_rev[3];
-            split_buffer[2][column_rev] = tmp_rev[2];
-            split_buffer[3][column_rev] = tmp_rev[1];
-            split_buffer[4][column_rev] = tmp_rev[0];
-
             self.butterfly5.perform_dht_array(&mut tmp_fwd);
-
+            
             split_buffer[0][column] = tmp_fwd[0];
             split_buffer[1][column] = tmp_fwd[1];
             split_buffer[2][column] = tmp_fwd[2];
             split_buffer[3][column] = tmp_fwd[3];
             split_buffer[4][column] = tmp_fwd[4];
+            
+            self.butterfly5.perform_dht_array(&mut tmp_rev);
+
+            split_buffer[0][self.height - column] = tmp_rev[4];
+            split_buffer[1][self.height - column] = tmp_rev[3];
+            split_buffer[2][self.height - column] = tmp_rev[2];
+            split_buffer[3][self.height - column] = tmp_rev[1];
+            split_buffer[4][self.height - column] = tmp_rev[0];
         }
     }
 
-    fn perform_dht_inplace(&self, buffer: &mut [T], _scratch: &mut [T]) {
-        let mut scratch = vec![Zero::zero(); buffer.len()];
-
+    fn perform_dht_inplace(&self, buffer: &mut [T], scratch: &mut [T]) {
         // Step 1: Transpose the width x height array to height x width
-        transpose::transpose(buffer, &mut scratch, 5, self.height);
+        array_utils::transpose_half_rev_out(buffer, scratch, 5, self.height);
 
         // Step 2: Compute DHTs of size `height` down the rows of our transposed array
-        self.height_size_fft.process_outofplace_with_scratch(&mut scratch, buffer, &mut []);
+        self.height_size_fft.process_outofplace_with_scratch(scratch, buffer, &mut []);
 
         // Step 3: Apply twiddle factors
         self.apply_twiddles(buffer);
@@ -212,7 +187,7 @@ impl<T: FftNum> MixedRadix5xn<T> {
         _scratch: &mut [T],
     ) {
         // Step 1: Transpose the width x height array to height x width
-        transpose::transpose(input, output, 5, self.height);
+        array_utils::transpose_half_rev_out(input, output, 5, self.height);
 
         // Step 2: Compute DHTs of size `height` down the rows of our transposed array
         self.height_size_fft.process_with_scratch(output, input);
@@ -225,6 +200,8 @@ impl<T: FftNum> MixedRadix5xn<T> {
 
 #[cfg(test)]
 mod unit_tests {
+    use num_traits::Zero;
+
     use super::*;
     use crate::test_utils::{check_dht_algorithm, random_real_signal, compare_real_vectors};
     use crate::scalar::DhtNaive;

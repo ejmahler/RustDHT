@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use num_complex::Complex;
-use num_traits::Zero;
 use rustfft::{FftNum, Length};
 
 use crate::{Dht, array_utils, dht_error_inplace, dht_error_outofplace, twiddles};
@@ -31,11 +30,10 @@ impl<T: FftNum> MixedRadix3xn<T> {
 
         let twiddle_limit = height / 2 + 1;
 
-        let mut twiddles = Vec::with_capacity(twiddle_limit * 2);
-        let half = T::from_f64(0.5).unwrap();
-        for x in 1..twiddle_limit {
-            twiddles.push(twiddles::compute_dft_twiddle_inverse::<T>(x * 1, len) * half);
-            twiddles.push(twiddles::compute_dft_twiddle_inverse::<T>(x * 2, len) * half);
+        let root2 = T::from_f32(0.5f32.sqrt()).unwrap();
+        let mut twiddles = Vec::with_capacity((twiddle_limit - 1) * 2);
+        for column in 1..twiddle_limit {
+            twiddles.push(twiddles::compute_dft_twiddle_inverse::<T>(column * 1 * 8 + len, len * 8) * root2);
         }
 
         // Collect some data about what kind of scratch space our inner DHTs need
@@ -110,56 +108,37 @@ impl<T: FftNum> MixedRadix3xn<T> {
             split_buffer[1][0] = col0[1];
             split_buffer[2][0] = col0[2];
         }
-
         
-
-        
-        for (column, twiddle_chunk) in (1..self.height/2 + 1).zip(self.twiddles.chunks_exact(2)) {
-            let input_fwd = [
-                split_buffer[0][column],
-                split_buffer[1][column],
-                split_buffer[2][column],
-            ];
-            let input_rev = [
-                split_buffer[0][self.height - column],
-                split_buffer[1][self.height - column],
-                split_buffer[2][self.height - column],
-            ];
-
-            let sum = [
-                input_fwd[1] + input_rev[1],
-                input_fwd[2] + input_rev[2]
-            ];
-            let diff = [
-                input_fwd[1] - input_rev[1],
-                input_fwd[2] - input_rev[2]
-            ];
-
-            let a = twiddle_chunk[0].re * sum[0]  - twiddle_chunk[0].im * diff[0];
-            let b = twiddle_chunk[1].re * diff[1] + twiddle_chunk[1].im * sum[1];
-            let c = twiddle_chunk[1].re * sum[1]  - twiddle_chunk[1].im * diff[1];
-            let d = twiddle_chunk[0].re * diff[0] + twiddle_chunk[0].im * sum[0];
-            let e = a - b;
-            let f = c - d;
-
+        // Step 3: Apply twiddle factors
+        for (column, twiddle) in (1..self.height/2+1).zip(self.twiddles.iter()) {
+            let input1fwd = split_buffer[1][column];
+            let input1rev = split_buffer[1][self.height - column];
+            let input2fwd = split_buffer[2][column];
+            let input2rev = split_buffer[2][self.height - column];
+            
+            let out1fwd = input1fwd + input2rev;
+            let out1rev = input2fwd + input1rev;
+            let out2fwd = input2fwd - input1rev;
+            let out2rev = input1fwd - input2rev;
+            
             let mut tmp_fwd = [
-                input_fwd[0],
-                a + b,
-                c + d,
+                split_buffer[0][column],
+                twiddle.re * out1fwd - twiddle.im * out2fwd,
+                twiddle.re * out2fwd + twiddle.im * out1fwd,
             ];
-
             let mut tmp_rev = [
-                input_rev[0],
-                f,
-                e,
+                split_buffer[0][self.height - column],
+                twiddle.re * out1rev - twiddle.im * out2rev,
+                twiddle.re * out2rev + twiddle.im * out1rev,
             ];
-
+            
             self.butterfly3.perform_dht_array(&mut tmp_fwd);
-            self.butterfly3.perform_dht_array(&mut tmp_rev);
-
+            
             split_buffer[0][column] = tmp_fwd[0];
             split_buffer[1][column] = tmp_fwd[1];
             split_buffer[2][column] = tmp_fwd[2];
+            
+            self.butterfly3.perform_dht_array(&mut tmp_rev);
 
             split_buffer[0][self.height - column] = tmp_rev[2];
             split_buffer[1][self.height - column] = tmp_rev[1];
@@ -167,14 +146,12 @@ impl<T: FftNum> MixedRadix3xn<T> {
         }
     }
 
-    fn perform_dht_inplace(&self, buffer: &mut [T], _scratch: &mut [T]) {
-        let mut scratch = vec![Zero::zero(); buffer.len()];
-
+    fn perform_dht_inplace(&self, buffer: &mut [T], scratch: &mut [T]) {
         // Step 1: Transpose the width x height array to height x width
-        transpose::transpose(buffer, &mut scratch, 3, self.height);
+        array_utils::transpose_half_rev_out(buffer, scratch, 3, self.height);
 
         // Step 2: Compute DHTs of size `height` down the rows of our transposed array
-        self.height_size_fft.process_outofplace_with_scratch(&mut scratch, buffer, &mut []);
+        self.height_size_fft.process_outofplace_with_scratch(scratch, buffer, &mut []);
 
         // Step 3: Apply twiddle factors
         self.apply_twiddles(buffer);
@@ -187,7 +164,7 @@ impl<T: FftNum> MixedRadix3xn<T> {
         _scratch: &mut [T],
     ) {
         // Step 1: Transpose the width x height array to height x width
-        transpose::transpose(input, output, 3, self.height);
+        array_utils::transpose_half_rev_out(input, output, 3, self.height);
 
         // Step 2: Compute DHTs of size `height` down the rows of our transposed array
         self.height_size_fft.process_with_scratch(output, input);

@@ -139,3 +139,22 @@ impl<T> RawSliceMut<T> {
         *self.ptr.add(index) = value;
     }
 }
+
+// Transpose the input to the output, but reverse the second half of the output rows.
+// Intended for use with MixedRadix#xn. Fastest if width is less than ~10
+#[inline(always)]
+pub fn transpose_half_rev_out<T: Copy>(input: &[T], output: &mut [T], width: usize, height: usize) {
+    assert_eq!(input.len(), output.len());
+    assert_eq!(input.len(), width * height);
+
+    let reversal_row_begin = width / 2 + 1;
+    for out_row in 0..height {
+        let out_row_rev = height - out_row - 1;
+        for out_column in 0..reversal_row_begin {
+            unsafe { *output.get_unchecked_mut(out_column * height + out_row) = *input.get_unchecked(out_row * width + out_column) };
+        }
+        for out_column in reversal_row_begin..width {
+            unsafe { *output.get_unchecked_mut(out_column * height + out_row_rev) = *input.get_unchecked(out_row * width + out_column) };
+        }
+    }
+}

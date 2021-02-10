@@ -98,17 +98,18 @@ fn bench_4xn_radix4(b: &mut Bencher, len: usize) {
     b.iter(|| {dht.process_with_scratch(&mut buffer, &mut scratch);} );
 }
 
-#[bench] fn bench_4xn_radix4_00016(b: &mut Bencher) { bench_4xn_radix4(b, 16); }
-#[bench] fn bench_4xn_radix4_00032(b: &mut Bencher) { bench_4xn_radix4(b, 32); }
-#[bench] fn bench_4xn_radix4_00064(b: &mut Bencher) { bench_4xn_radix4(b, 64); }
-#[bench] fn bench_4xn_radix4_00128(b: &mut Bencher) { bench_4xn_radix4(b, 128); }
-#[bench] fn bench_4xn_radix4_00256(b: &mut Bencher) { bench_4xn_radix4(b, 256); }
-#[bench] fn bench_4xn_radix4_00512(b: &mut Bencher) { bench_4xn_radix4(b, 512); }
-#[bench] fn bench_4xn_radix4_01024(b: &mut Bencher) { bench_4xn_radix4(b, 1024); }
-#[bench] fn bench_4xn_radix4_02048(b: &mut Bencher) { bench_4xn_radix4(b, 2048); }
-#[bench] fn bench_4xn_radix4_16384(b: &mut Bencher) { bench_4xn_radix4(b, 16384); }
-#[bench] fn bench_4xn_radix4_32768(b: &mut Bencher) { bench_4xn_radix4(b, 32768); }
-#[bench] fn bench_4xn_radix4_65536(b: &mut Bencher) { bench_4xn_radix4(b, 65536); }
+#[bench] fn bench_4xn_radix4_0000016(b: &mut Bencher) { bench_4xn_radix4(b, 16); }
+#[bench] fn bench_4xn_radix4_0000032(b: &mut Bencher) { bench_4xn_radix4(b, 32); }
+#[bench] fn bench_4xn_radix4_0000064(b: &mut Bencher) { bench_4xn_radix4(b, 64); }
+#[bench] fn bench_4xn_radix4_0000128(b: &mut Bencher) { bench_4xn_radix4(b, 128); }
+#[bench] fn bench_4xn_radix4_0000256(b: &mut Bencher) { bench_4xn_radix4(b, 256); }
+#[bench] fn bench_4xn_radix4_0000512(b: &mut Bencher) { bench_4xn_radix4(b, 512); }
+#[bench] fn bench_4xn_radix4_0001024(b: &mut Bencher) { bench_4xn_radix4(b, 1024); }
+#[bench] fn bench_4xn_radix4_0002048(b: &mut Bencher) { bench_4xn_radix4(b, 2048); }
+#[bench] fn bench_4xn_radix4_0016384(b: &mut Bencher) { bench_4xn_radix4(b, 16384); }
+#[bench] fn bench_4xn_radix4_0032768(b: &mut Bencher) { bench_4xn_radix4(b, 32768); }
+#[bench] fn bench_4xn_radix4_0065536(b: &mut Bencher) { bench_4xn_radix4(b, 65536); }
+#[bench] fn bench_4xn_radix4_1048576(b: &mut Bencher) { bench_4xn_radix4(b, 1048576); }
 
 fn bench_direct_radix4(b: &mut Bencher, len: usize) {
 
@@ -119,17 +120,18 @@ fn bench_direct_radix4(b: &mut Bencher, len: usize) {
     b.iter(|| {dht.process_with_scratch(&mut buffer, &mut scratch);} );
 }
 
-#[bench] fn bench_direct_radix4_00016(b: &mut Bencher) { bench_direct_radix4(b, 16); }
-#[bench] fn bench_direct_radix4_00032(b: &mut Bencher) { bench_direct_radix4(b, 32); }
-#[bench] fn bench_direct_radix4_00064(b: &mut Bencher) { bench_direct_radix4(b, 64); }
-#[bench] fn bench_direct_radix4_00128(b: &mut Bencher) { bench_direct_radix4(b, 128); }
-#[bench] fn bench_direct_radix4_00256(b: &mut Bencher) { bench_direct_radix4(b, 256); }
-#[bench] fn bench_direct_radix4_00512(b: &mut Bencher) { bench_direct_radix4(b, 512); }
-#[bench] fn bench_direct_radix4_01024(b: &mut Bencher) { bench_direct_radix4(b, 1024); }
-#[bench] fn bench_direct_radix4_02048(b: &mut Bencher) { bench_direct_radix4(b, 2048); }
-#[bench] fn bench_direct_radix4_16384(b: &mut Bencher) { bench_direct_radix4(b, 16384); }
-#[bench] fn bench_direct_radix4_32768(b: &mut Bencher) { bench_direct_radix4(b, 32768); }
-#[bench] fn bench_direct_radix4_65536(b: &mut Bencher) { bench_direct_radix4(b, 65536); }
+#[bench] fn bench_direct_radix4_0000016(b: &mut Bencher) { bench_direct_radix4(b, 16); }
+#[bench] fn bench_direct_radix4_0000032(b: &mut Bencher) { bench_direct_radix4(b, 32); }
+#[bench] fn bench_direct_radix4_0000064(b: &mut Bencher) { bench_direct_radix4(b, 64); }
+#[bench] fn bench_direct_radix4_0000128(b: &mut Bencher) { bench_direct_radix4(b, 128); }
+#[bench] fn bench_direct_radix4_0000256(b: &mut Bencher) { bench_direct_radix4(b, 256); }
+#[bench] fn bench_direct_radix4_0000512(b: &mut Bencher) { bench_direct_radix4(b, 512); }
+#[bench] fn bench_direct_radix4_0001024(b: &mut Bencher) { bench_direct_radix4(b, 1024); }
+#[bench] fn bench_direct_radix4_0002048(b: &mut Bencher) { bench_direct_radix4(b, 2048); }
+#[bench] fn bench_direct_radix4_0016384(b: &mut Bencher) { bench_direct_radix4(b, 16384); }
+#[bench] fn bench_direct_radix4_0032768(b: &mut Bencher) { bench_direct_radix4(b, 32768); }
+#[bench] fn bench_direct_radix4_0065536(b: &mut Bencher) { bench_direct_radix4(b, 65536); }
+#[bench] fn bench_direct_radix4_1048576(b: &mut Bencher) { bench_direct_radix4(b, 1048576); }
 
 fn make_splitradix(len: usize) -> Arc<dyn Dht<f32>> {
     let mut transforms = vec![
