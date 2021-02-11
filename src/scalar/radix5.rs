@@ -264,12 +264,24 @@ mod unit_tests {
                     twiddled_output[i] = twiddle.im * twiddled_input[i] + twiddle.re * twiddled_input[i_rev];
                 }
 
+                let mut twiddled_output2 = vec![Zero::zero(); len];
+                for i in 0..len / 2 + 1 {
+                    let i_rev = (len - i) % len;
+
+                    let twiddle = twiddles::compute_dft_twiddle_forward::<f32>(i, len);
+
+                    twiddled_output2[i] = twiddle.im * twiddled_input[i] + twiddle.re * twiddled_input[i_rev];
+                    twiddled_output2[i_rev] = -twiddle.im * twiddled_input[i_rev] + twiddle.re * twiddled_input[i];
+                }
+
+
                 // or you can just reverse the input, and get the same result
                 let mut reversed_buffer = input.clone();
                 reversed_buffer.reverse();
                 dht.process(&mut reversed_buffer);
 
                 assert!(compare_real_vectors(&twiddled_output, &reversed_buffer));
+                assert!(compare_real_vectors(&twiddled_output2, &reversed_buffer));
             }
         }
     }
