@@ -220,11 +220,11 @@ impl<T: FftNum> Radix4<T> {
         // but mixed radix only does one step and then calls itself recusrively, and this algorithm does every layer all the way down
         // so we're going to pack all the "layers" of twiddle factors into a single array, starting with the bottom layer and going up
         let mut twiddle_stride = len / (base_len * 4);
-        let mut twiddle_factors = Vec::with_capacity(len * 2);
+        let mut twiddle_factors = Vec::with_capacity(len);
         while twiddle_stride > 0 {
             let num_rows = len / (twiddle_stride * 4);
             for i in 1..num_rows {
-                for k in 1..4 {
+                for k in 1..3 {
                     let twiddle = twiddles::compute_dft_twiddle_inverse(i * k * twiddle_stride, len);
                     twiddle_factors.push(twiddle);
                 }
@@ -279,7 +279,7 @@ impl<T: FftNum> Radix4<T> {
             }
 
             //skip past all the twiddle factors used in this layer
-            let twiddle_offset = (current_size * 3) / 4 - 3;
+            let twiddle_offset = (current_size * 2) / 4 - 2;
             layer_twiddles = &layer_twiddles[twiddle_offset..];
 
             current_size *= 4;
@@ -302,8 +302,55 @@ fn prepare_radix4<T: FftNum>(
             }
         }
     } else {
-        for i in 0..4 {
+        for i in 0..3 {
             prepare_radix4(
+                size / 4,
+                base_len,
+                &input[i * stride..],
+                &mut output[i * (size / 4)..],
+                stride * 4,
+            );
+        }
+
+        {
+            let i = 3;
+            prepare_radix4_reversed(
+                size / 4,
+                base_len,
+                &input[i * stride..],
+                &mut output[i * (size / 4)..],
+                stride * 4,
+            );
+        }
+    }
+}
+
+fn prepare_radix4_reversed<T: FftNum>(
+    size: usize,
+    base_len: usize,
+    input: &[T],
+    output: &mut [T],
+    stride: usize,
+) {
+    if size == base_len {
+        unsafe {
+            for i in 0..size {
+                *output.get_unchecked_mut(i) = *input.get_unchecked((size - i - 1) * stride);
+            }
+        }
+    } else {
+        {
+            let i = 1;
+            prepare_radix4(
+                size / 4,
+                base_len,
+                &input[i * stride..],
+                &mut output[i * (size / 4)..],
+                stride * 4,
+            );
+        }
+        for i in 0..4 {
+            prepare_radix4_reversed(
                 size / 4,
                 base_len,
                 &input[i * stride..],
@@ -350,52 +397,46 @@ unsafe fn butterfly_4<T: FftNum>(
     }
 
     
-    for (column, twiddle_chunk) in (1..num_ffts/2 + 1).zip(twiddles.chunks_exact(3)) {
-        // load elements from each of our 4 rows, both from the front and the back of the array
-        let input_fwd = [
-            split_buffer[0][column],
-            split_buffer[1][column],
-            split_buffer[2][column],
-            split_buffer[3][column]
-        ];
-        let input_rev = [
-            split_buffer[0][num_ffts - column],
-            split_buffer[1][num_ffts - column],
-            split_buffer[2][num_ffts - column],
-            split_buffer[3][num_ffts - column]
-        ];
-
-        // Apply our twiddle factors
-        let mut out0_fwd = input_fwd[0];
-        let mut out1_fwd = input_fwd[1] * twiddle_chunk[0].re + input_rev[1] * twiddle_chunk[0].im;
-        let mut out2_fwd = input_fwd[2] * twiddle_chunk[1].re + input_rev[2] * twiddle_chunk[1].im;
-        let mut out3_fwd = input_fwd[3] * twiddle_chunk[2].im - input_rev[3] * twiddle_chunk[2].re;
-
-        let mut out0_rev = input_rev[0];
-        let mut out1_rev = input_fwd[3] * twiddle_chunk[2].re + input_rev[3] * twiddle_chunk[2].im;
-        let mut out2_rev = input_fwd[2] * twiddle_chunk[1].im - input_rev[2] * twiddle_chunk[1].re;
-        let mut out3_rev = input_rev[1] * twiddle_chunk[0].re - input_fwd[1] * twiddle_chunk[0].im;
+    for (column, twiddle_chunk) in (1..num_ffts/2 + 1).zip(twiddles.chunks_exact(2)) {
+        let input0fwd = split_buffer[0][column];
+        let input0rev = split_buffer[0][num_ffts - column];
+        let input1fwd = split_buffer[1][column];
+        let input1rev = split_buffer[1][num_ffts - column];
+        let input2fwd = split_buffer[2][column];
+        let input2rev = split_buffer[2][num_ffts - column];
+        let input3fwd = split_buffer[3][column];
+        let input3rev = split_buffer[3][num_ffts - column];   
         
-        // do a giant pile of butterfy 2's
-        // most of these come from the 2 size-4 DHTs (one for fwd, one for rev) we would have done after the twiddle factrs were applied.
-        // In the process of removing redundant operations, we unfortunately need to unravel the butterfly 4's, leaving us with this mess.
-        Butterfly2::perform_dht_strided(&mut out1_fwd, &mut out1_rev);
-        Butterfly2::perform_dht_strided(&mut out3_fwd, &mut out3_rev);
-        Butterfly2::perform_dht_strided(&mut out0_fwd, &mut out2_fwd);
-        Butterfly2::perform_dht_strided(&mut out0_rev, &mut out2_rev);
-        Butterfly2::perform_dht_strided(&mut out0_fwd, &mut out1_fwd);
-        Butterfly2::perform_dht_strided(&mut out0_rev, &mut out1_rev);
-        Butterfly2::perform_dht_strided(&mut out2_fwd, &mut out3_fwd);
-        Butterfly2::perform_dht_strided(&mut out2_rev, &mut out3_rev);
+        let out1fwd = input1fwd + input3rev;
+        let out3fwd = input1rev - input3fwd;
+        let out1rev = input3fwd + input1rev;
+        let out3rev = input3rev - input1fwd;
         
-        // The last step in the butterfly 4 would have been to do a 2x2 transpose, so we have to do that here
-        let post_dht_fwd = [out0_fwd, out2_fwd, out1_fwd, out3_fwd];
-        let post_dht_rev = [out0_rev, out2_rev, out1_rev, out3_rev];
+        let mut fwd0: T = input0fwd;
+        let mut rev0: T = input0rev;
+        let mut fwd2: T = twiddle_chunk[1].re * input2fwd + twiddle_chunk[1].im * input2rev;
+        let mut rev2: T = twiddle_chunk[1].re * input2rev - twiddle_chunk[1].im * input2fwd;
 
-        for i in 0..4 {
-            split_buffer[i][column] = post_dht_fwd[i];
-            split_buffer[i][num_ffts - column] = post_dht_rev[i];
-        }
+        let mut fwd1: T = twiddle_chunk[0].re * out1fwd   + twiddle_chunk[0].im * out3fwd;
+        let mut rev1: T = twiddle_chunk[0].re * out1rev   + twiddle_chunk[0].im * out3rev;
+        let mut fwd3: T = twiddle_chunk[0].re * out3fwd   - twiddle_chunk[0].im * out1fwd;
+        let mut rev3: T = twiddle_chunk[0].re * out3rev   - twiddle_chunk[0].im * out1rev;
+
+        Butterfly2::perform_dht_strided(&mut fwd0, &mut fwd2);
+        Butterfly2::perform_dht_strided(&mut fwd0, &mut fwd1);
+        Butterfly2::perform_dht_strided(&mut fwd2, &mut fwd3);
+        Butterfly2::perform_dht_strided(&mut rev0, &mut rev2);
+        Butterfly2::perform_dht_strided(&mut rev0, &mut rev1);
+        Butterfly2::perform_dht_strided(&mut rev2, &mut rev3);
+        
+        split_buffer[0][column] = fwd0;
+        split_buffer[1][column] = fwd2;
+        split_buffer[2][column] = fwd1;
+        split_buffer[3][column] = fwd3;
+        split_buffer[0][num_ffts - column] = rev3;
+        split_buffer[1][num_ffts - column] = rev1;
+        split_buffer[2][num_ffts - column] = rev2;
+        split_buffer[3][num_ffts - column] = rev0;
     }
 }
 
