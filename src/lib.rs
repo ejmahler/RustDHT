@@ -7,6 +7,7 @@ mod macros;
 pub mod scalar;
 mod twiddles;
 mod array_utils;
+mod math_utils;
 
 #[cfg(test)]
 mod test_utils;
