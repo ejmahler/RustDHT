@@ -92,13 +92,13 @@ impl<T: FftNum> RadersAlgorithm<T> {
         // copy the buffer into the scratch, reordering as we go. also compute a sum of all elements
         let mut input_index = 1;
         for scratch_element in inner_dht_buffer.iter_mut() {
-            input_index = (input_index * self.primitive_root) % self.reduced_len;
-
             let buffer_element = buffer[input_index - 1];
             *scratch_element = buffer_element;
+
+            input_index = (input_index * self.primitive_root) % self.reduced_len;
         }
 
-        // perform the first of two inner FFTs
+        // perform the first of two inner DHTs
         let inner_scratch = if extra_scratch.len() > 0 {
             extra_scratch
         } else {
@@ -111,26 +111,14 @@ impl<T: FftNum> RadersAlgorithm<T> {
 
         // Multiply the result of our inner DHT with our precomputed twiddle factors.
         inner_dht_buffer[0] = inner_dht_buffer[0] * self.twiddles[0];
-        dbg!(&self.twiddles);
         for i in 1..inner_dht_buffer.len() / 2 {
             let i_rev = inner_dht_buffer.len() - i;
 
-            let twiddle_fwd = self.twiddles[i];
-            let twiddle_rev = self.twiddles[i_rev];
+            let output_fwd =  (self.twiddles[i] * inner_dht_buffer[i_rev] + self.twiddles[i_rev] * inner_dht_buffer[i]) * T::from_f32(0.5).unwrap();
+            let output_rev =  (self.twiddles[i_rev] * inner_dht_buffer[i_rev] - self.twiddles[i] * inner_dht_buffer[i]) * T::from_f32(0.5).unwrap();
 
-            let input_fwd = inner_dht_buffer[i];
-            let input_rev = inner_dht_buffer[i_rev];
-
-            println!();
-            dbg!(i, i_rev);
-            dbg!(twiddle_fwd, twiddle_rev);
-            dbg!(input_fwd, input_rev);
-
-            let output_fwd = twiddle_fwd * input_fwd - twiddle_rev * input_rev;
-            let output_rev = twiddle_fwd * input_rev + twiddle_rev * input_fwd;
-
-            inner_dht_buffer[i] = output_fwd;
-            inner_dht_buffer[i_rev] = output_rev;
+            inner_dht_buffer[i] = output_fwd + output_rev;
+            inner_dht_buffer[i_rev] = output_fwd - output_rev;
         }
         // If our length is even, we have to process the middle-most element separately
         if inner_dht_buffer.len() % 2 == 0 {
@@ -141,14 +129,16 @@ impl<T: FftNum> RadersAlgorithm<T> {
         // We need to add the first input value to all output values. We can accomplish this by adding it to the DC input of our inner dht.
         inner_dht_buffer[0] = inner_dht_buffer[0] + buffer_first_val;
 
-        // execute the second FFT
+        // execute the second DHT
         self.inner_dht.process_with_scratch(inner_dht_buffer, inner_scratch);
 
         // copy the final values into the output, reordering as we go
-        let mut output_index = 1;
-        for inner_element in inner_dht_buffer {
+        buffer[0] = inner_dht_buffer[0];
+        let mut output_index = self.primitive_root_inverse;
+        for k in 1..buffer.len() {
+            buffer[output_index- 1] = inner_dht_buffer[inner_dht_buffer.len() - k];
+
             output_index = (output_index * self.primitive_root_inverse) % self.reduced_len;
-            buffer[output_index - 1] = *inner_element;
         }
     }
 
@@ -165,47 +155,39 @@ impl<T: FftNum> RadersAlgorithm<T> {
         // copy the inout into the output, reordering as we go. also compute a sum of all elements
         let mut input_index = 1;
         for output_element in output.iter_mut() {
-            input_index = (input_index * self.primitive_root) % self.reduced_len;
-
+            
             let input_element = input[input_index - 1];
             *output_element = input_element;
+            input_index = (input_index * self.primitive_root) % self.reduced_len;
         }
-
+        
         // perform the first of two inner DHTs
         let inner_scratch = if scratch.len() > 0 {
             &mut scratch[..]
         } else {
             &mut input[..]
         };
-        self.inner_dht.process_with_scratch(output, inner_scratch);
+        self.inner_dht.process_with_scratch(output, inner_scratch);        
 
         // output[0] now contains the sum of elements 1..len. We need the sum of all elements, so all we have to do is add the first input
         *output_first = *input_first + output[0];
 
-        // Multiply the result of our inner DHT with our precomputed twiddle factors. Also copy to the input buffer.
         input[0] = output[0] * self.twiddles[0];
-    
         for i in 1..output.len() / 2 {
             let i_rev = output.len() - i;
 
-            let twiddle_fwd = self.twiddles[i];
-            let twiddle_rev = self.twiddles[i_rev];
+            let output_fwd =  (self.twiddles[i] * output[i_rev] + self.twiddles[i_rev] * output[i]) * T::from_f32(0.5).unwrap();
+            let output_rev =  (self.twiddles[i_rev] * output[i_rev] - self.twiddles[i] * output[i]) * T::from_f32(0.5).unwrap();
 
-            let input_fwd = output[i];
-            let input_rev = output[i_rev];
-
-            let output_fwd = twiddle_fwd * input_fwd - twiddle_rev * input_rev;
-            let output_rev = twiddle_fwd * input_rev + twiddle_rev * input_fwd;
-
-            input[i] = output_fwd;
-            input[i_rev] = output_rev;
+            input[i] = output_fwd + output_rev;
+            input[i_rev] = output_fwd - output_rev;
         }
         // If our length is even, we have to process the middle-most element separately
-        if output.len() % 2 == 0 {
-            let mid_index = output.len() / 2;
+        if input.len() % 2 == 0 {
+            let mid_index = input.len() / 2;
             input[mid_index] = output[mid_index] * self.twiddles[mid_index];
         }
-            
+
         // We need to add the first input value to all output values. We can accomplish this by adding it to the DC input of our inner dht.
         input[0] = input[0] + *input_first;
 
@@ -218,10 +200,12 @@ impl<T: FftNum> RadersAlgorithm<T> {
         self.inner_dht.process_with_scratch(input, inner_scratch);
 
         // copy the final values into the output, reordering as we go
-        let mut output_index = 1;
-        for input_element in input {
+        output[0] = input[0];
+        let mut output_index = self.primitive_root_inverse;
+        for k in 1..output.len() {
+            output[output_index - 1] = input[input.len() - k];
+
             output_index = (output_index * self.primitive_root_inverse) % self.reduced_len;
-            output[output_index - 1] = *input_element;
         }
     }
 }
