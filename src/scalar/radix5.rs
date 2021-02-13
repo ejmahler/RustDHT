@@ -283,6 +283,26 @@ mod unit_tests {
                 assert!(compare_real_vectors(&twiddled_output, &reversed_buffer));
                 assert!(compare_real_vectors(&twiddled_output2, &reversed_buffer));
             }
+        }        
+    }
+
+    // Another interesting property: If you reverse everything but the first element, on both the input and output,
+    // you end up with the same result as if nothing was reversed
+    #[test]
+    fn test_double_reversal_property() {
+        for len in 2..10 {
+            let dht = DhtNaive::<f32>::new(len);
+            let input = random_real_signal(len);
+
+            let mut control_buffer = input.clone();
+            dht.process(&mut control_buffer);
+
+            let mut test_buffer = input.clone();
+            (&mut test_buffer[1..]).reverse();
+            dht.process(&mut test_buffer);
+            (&mut test_buffer[1..]).reverse();
+
+            assert!(compare_real_vectors(&control_buffer, &test_buffer));
         }
     }
 }
