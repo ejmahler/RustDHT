@@ -340,7 +340,7 @@ fn prepare_radix4_reversed<T: FftNum>(
         }
     } else {
         {
-            let i = 1;
+            let i = 0;
             prepare_radix4(
                 size / 4,
                 base_len,
@@ -349,7 +349,7 @@ fn prepare_radix4_reversed<T: FftNum>(
                 stride * 4,
             );
         }
-        for i in 0..4 {
+        for i in 1..4 {
             prepare_radix4_reversed(
                 size / 4,
                 base_len,

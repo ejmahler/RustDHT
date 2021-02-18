@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use test::Bencher;
 
-use rustdht::{Dht, scalar::{Butterfly1, Butterfly16, Butterfly2, Butterfly3, Butterfly4, Butterfly5, Butterfly8, Butterfly9, MixedRadix, MixedRadix3xn, MixedRadix4xn, MixedRadix5xn, Radix4, SplitRadix}};
+use rustdht::{Dht, scalar::{Butterfly1, Butterfly16, Butterfly2, Butterfly3, Butterfly4, Butterfly5, Butterfly8, Butterfly9, MixedRadix, MixedRadix3xn, MixedRadix4xn, MixedRadix5xn, RadersAlgorithm, Radix4, SplitRadix}};
 use rustfft::{FftNum, Length};
 
 struct Noop {
@@ -230,3 +230,37 @@ fn bench_5xn_radix5(b: &mut Bencher, len: usize) {
 #[bench] fn bench_5xn_radix5_03125(b: &mut Bencher) { bench_5xn_radix5(b, 3125); }
 #[bench] fn bench_5xn_radix5_15625(b: &mut Bencher) { bench_5xn_radix5(b, 15625); }
 #[bench] fn bench_5xn_radix5_78125(b: &mut Bencher) { bench_5xn_radix5(b, 78125); }
+
+fn bench_raders_noop(b: &mut Bencher, len: usize) {
+
+    let inner_dht = Arc::new(Noop { len: len - 1 });
+
+    let dht : Arc<Dht<_>> = Arc::new(RadersAlgorithm::new(inner_dht));
+
+    let mut buffer = vec![0_f32; dht.len()];
+    let mut scratch = vec![0_f32; dht.get_inplace_scratch_len()];
+    b.iter(|| {dht.process_with_scratch(&mut buffer, &mut scratch);} );
+}
+
+#[bench] fn raders_noop_00031(b: &mut Bencher) { bench_raders_noop(b, 31); }
+#[bench] fn raders_noop_00097(b: &mut Bencher) { bench_raders_noop(b, 97); }
+#[bench] fn raders_noop_00257(b: &mut Bencher) { bench_raders_noop(b, 257); }
+#[bench] fn raders_noop_01031(b: &mut Bencher) { bench_raders_noop(b, 1031); }
+#[bench] fn raders_noop_04099(b: &mut Bencher) { bench_raders_noop(b, 4099); }
+#[bench] fn raders_noop_16411(b: &mut Bencher) { bench_raders_noop(b, 16411); }
+#[bench] fn raders_noop_65537(b: &mut Bencher) { bench_raders_noop(b, 65537); }
+
+fn bench_raders_power2(b: &mut Bencher, len: usize) {
+
+    let inner_dht = Arc::new(Radix4::new(len - 1));
+
+    let fft : Arc<Dht<f32>> = Arc::new(RadersAlgorithm::new(inner_dht));
+
+    let mut buffer = vec![0_f32; fft.len()];
+    let mut scratch = vec![0_f32; fft.get_inplace_scratch_len()];
+    b.iter(|| {fft.process_with_scratch(&mut buffer, &mut scratch);} );
+}
+
+#[bench] fn raders_power2_00017(b: &mut Bencher) { bench_raders_power2(b, 17); }
+#[bench] fn raders_power2_00257(b: &mut Bencher) { bench_raders_power2(b, 257); }
+#[bench] fn raders_power2_65537(b: &mut Bencher) { bench_raders_power2(b, 65537); }
