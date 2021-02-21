@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use test::Bencher;
 
-use rustdht::{Dht, scalar::{Butterfly1, Butterfly16, Butterfly2, Butterfly3, Butterfly4, Butterfly5, Butterfly8, Butterfly9, MixedRadix, MixedRadix3xn, MixedRadix4xn, MixedRadix5xn, RadersAlgorithm, Radix4, SplitRadix}};
+use rustdht::{Dht, scalar::{Butterfly1, Butterfly16, Butterfly2, Butterfly3, Butterfly4, Butterfly5, Butterfly6, Butterfly8, Butterfly9, MixedRadix, MixedRadix3xn, MixedRadix4xn, MixedRadix5xn, MixedRadix6xn, RadersAlgorithm, Radix4, SplitRadix}};
 use rustfft::{FftNum, Length};
 
 struct Noop {
@@ -231,6 +231,31 @@ fn bench_5xn_radix5(b: &mut Bencher, len: usize) {
 #[bench] fn bench_5xn_radix5_15625(b: &mut Bencher) { bench_5xn_radix5(b, 15625); }
 #[bench] fn bench_5xn_radix5_78125(b: &mut Bencher) { bench_5xn_radix5(b, 78125); }
 
+fn make_6xn_radix6(len: usize) -> Arc<dyn Dht<f32>> {
+    match len {
+        0|1 => panic!(),
+        6 => Arc::new(Butterfly6::new()),
+        _ => Arc::new(MixedRadix6xn::new(make_6xn_radix6(len/6))),
+    }
+}
+
+fn bench_6xn_radix6(b: &mut Bencher, len: usize) {
+
+    let dht = make_6xn_radix6(len);
+    assert_eq!(dht.len(), len);
+
+    let mut buffer = vec![0_f32; dht.len()];
+    let mut scratch = vec![0_f32; dht.get_inplace_scratch_len()];
+    b.iter(|| {dht.process_with_scratch(&mut buffer, &mut scratch);} );
+}
+
+#[bench] fn bench_6xn_radix6_00006(b: &mut Bencher) { bench_6xn_radix6(b, 6); }
+#[bench] fn bench_6xn_radix6_00036(b: &mut Bencher) { bench_6xn_radix6(b, 36); }
+#[bench] fn bench_6xn_radix6_00216(b: &mut Bencher) { bench_6xn_radix6(b, 216); }
+#[bench] fn bench_6xn_radix6_01296(b: &mut Bencher) { bench_6xn_radix6(b, 1296); }
+#[bench] fn bench_6xn_radix6_07776(b: &mut Bencher) { bench_6xn_radix6(b, 7776); }
+#[bench] fn bench_6xn_radix6_46656(b: &mut Bencher) { bench_6xn_radix6(b, 46656); }
+
 fn bench_raders_noop(b: &mut Bencher, len: usize) {
 
     let inner_dht = Arc::new(Noop { len: len - 1 });
@@ -264,3 +289,16 @@ fn bench_raders_power2(b: &mut Bencher, len: usize) {
 #[bench] fn raders_power2_00017(b: &mut Bencher) { bench_raders_power2(b, 17); }
 #[bench] fn raders_power2_00257(b: &mut Bencher) { bench_raders_power2(b, 257); }
 #[bench] fn raders_power2_65537(b: &mut Bencher) { bench_raders_power2(b, 65537); }
+
+#[bench] fn bench_butterfly3(b: &mut Bencher) { 
+    let dht = Arc::new(Butterfly3::<f32>::new()) as Arc<dyn Dht<f32>>;
+
+    let mut buffer = vec![0_f32; dht.len() * 100];
+    b.iter(|| { dht.process_with_scratch(&mut buffer, &mut []); });
+}
+#[bench] fn bench_butterfly6(b: &mut Bencher) { 
+    let dht = Arc::new(Butterfly6::<f32>::new()) as Arc<dyn Dht<f32>>;
+
+    let mut buffer = vec![0_f32; dht.len() * 100];
+    b.iter(|| { dht.process_with_scratch(&mut buffer, &mut []); });
+}

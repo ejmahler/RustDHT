@@ -155,13 +155,13 @@ impl<T: FftNum> Butterfly2<T> {
 
 
 pub struct Butterfly3<T> {
-    twiddle: T,
+    twiddle: Complex<T>,
 }
 boilerplate_fft_butterfly!(Butterfly3, 3);
 impl<T: FftNum> Butterfly3<T> {
     #[inline(always)]
     pub fn new() -> Self {
-        Self { twiddle: twiddles::compute_dht_twiddle(1, 3), }
+        Self { twiddle: twiddles::compute_dft_twiddle_inverse(1, 3), }
     }
     #[inline(always)]
     unsafe fn perform_dht_contiguous(
@@ -169,20 +169,18 @@ impl<T: FftNum> Butterfly3<T> {
         input: RawSlice<T>,
         output: RawSliceMut<T>,
     ) {
-        // Algorithm from https://arxiv.org/pdf/1502.01038.pdf "A factorization scheme for some discrete hartley transform matrices" by Olibeira, Cintra, Campello de Souza
         let input0 = input.load(0);
-        let input1 = input.load(1);
-        let input2 = input.load(2);
+        let mut input1 = input.load(1);
+        let mut input2 = input.load(2);
 
-        let mut value1 = input1;
-        let mut value2 = input2;
+        Butterfly2::perform_dht_strided(&mut input1, &mut input2);
 
-        Butterfly2::perform_dht_strided(&mut value1, &mut value2);
-        value2 = value2 * self.twiddle;
+        let output0 = input0 + input1;
+        input1 = input1 * self.twiddle.re + input0;
+        input2 = input2 * self.twiddle.im;
 
-        let output0 = input0 + value1;
-        let output1 = input0 + value2 - input2;
-        let output2 = input0 - value2 - input1;
+        let output1 = input1 + input2;
+        let output2 = input1 - input2;
 
         output.store(output0, 0);
         output.store(output1, 1);
@@ -288,6 +286,57 @@ impl<T: FftNum> Butterfly5<T> {
         output.store(out2, 2);
         output.store(out3, 3);
         output.store(out4, 4);
+    }
+}
+
+pub struct Butterfly6<T> {
+    butterfly3: Butterfly3<T>,
+}
+boilerplate_fft_butterfly!(Butterfly6, 6);
+impl<T: FftNum> Butterfly6<T> {
+    #[inline(always)]
+    pub fn new() -> Self {
+        Self {
+            butterfly3: Butterfly3::new(),
+        }
+    }
+    #[inline(always)]
+    unsafe fn perform_dht_contiguous(
+        &self,
+        input: RawSlice<T>,
+        output: RawSliceMut<T>,
+    ) {
+        // algorithm: MixedRadix2xn with an inner DHT of Butterfly3
+        let mut chunk0 = [
+            input.load(0),
+            input.load(2),
+            input.load(4),
+        ];
+        let mut chunk1 = [
+            input.load(1),
+            input.load(3),
+            input.load(5),
+        ];
+
+        self.butterfly3.perform_dht_array(&mut chunk0);
+        self.butterfly3.perform_dht_array(&mut chunk1);
+
+        let input_top_fwd = chunk1[1];
+        let input_top_rev = chunk1[2];
+
+        chunk1[1] = self.butterfly3.twiddle.im * input_top_rev - self.butterfly3.twiddle.re * input_top_fwd;
+        chunk1[2] =-self.butterfly3.twiddle.re * input_top_rev - self.butterfly3.twiddle.im * input_top_fwd;
+
+        Butterfly2::perform_dht_strided(&mut chunk0[0], &mut chunk1[0]);
+        Butterfly2::perform_dht_strided(&mut chunk0[1], &mut chunk1[1]);
+        Butterfly2::perform_dht_strided(&mut chunk0[2], &mut chunk1[2]);
+
+        output.store(chunk0[0],0);
+        output.store(chunk0[1],1);
+        output.store(chunk1[2],2);
+        output.store(chunk1[0],3);
+        output.store(chunk1[1],4);
+        output.store(chunk0[2],5);
     }
 }
 
@@ -548,6 +597,7 @@ mod unit_tests {
     test_butterfly_func!(test_butterfly3, Butterfly3, 3);
     test_butterfly_func!(test_butterfly4, Butterfly4, 4);
     test_butterfly_func!(test_butterfly5, Butterfly5, 5);
+    test_butterfly_func!(test_butterfly6, Butterfly6, 6);
     test_butterfly_func!(test_butterfly8, Butterfly8, 8);
     test_butterfly_func!(test_butterfly9, Butterfly9, 9);
     test_butterfly_func!(test_butterfly16, Butterfly16, 16);
